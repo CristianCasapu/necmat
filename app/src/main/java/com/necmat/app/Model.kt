@@ -118,15 +118,21 @@ private val MODULE_BOX_REGEX = Regex("(\\d+)\\s*module", RegexOption.IGNORE_CASE
 fun isModularBox(name: String): Boolean =
     name.contains("doz", ignoreCase = true) && MODULE_BOX_REGEX.containsMatchIn(name)
 
+/** Orice doză (modulară, aparat, legături) — montată deja la instalare. */
+fun isDozaItem(name: String): Boolean = name.contains("doz", ignoreCase = true)
+
 /**
- * Pregătește lucrarea pentru PDF: dacă includeBoxes = false, dozele modulare
- * sunt eliminate din listă (rămân doar pentru calculele de accesorii).
+ * Pregătește lucrarea pentru PDF. Cu includeBoxes = false (implicit), dozele
+ * de orice fel și tabloul electric NU apar în PDF: sunt deja montate și
+ * servesc doar la calcule. Clemele, accesoriile (rame, obturatoare) și
+ * restul materialelor de cumpărat rămân.
  */
 fun Work.filterForPdf(includeBoxes: Boolean): Work {
     if (includeBoxes) return this
     return copy(
         categories = categories
-            .map { c -> c.copy(materials = c.materials.filterNot { isModularBox(it.name) }) }
+            .filterNot { it.name.contains("tablou", ignoreCase = true) }
+            .map { c -> c.copy(materials = c.materials.filterNot { isDozaItem(it.name) }) }
             .filter { it.materials.isNotEmpty() }
     )
 }

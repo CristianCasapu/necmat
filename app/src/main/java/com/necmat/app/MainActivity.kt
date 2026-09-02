@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -81,6 +82,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -97,6 +99,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.necmat.app.ui.NecMatTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -240,6 +243,12 @@ fun App(vm: AppViewModel) {
                         DropdownMenuItem(
                             text = { Text("Golește cantitățile") },
                             onClick = { menuOpen = false; confirmReset = true })
+                        DropdownMenuItem(
+                            text = { Text("Pliază toate categoriile") },
+                            onClick = { menuOpen = false; vm.setAllCollapsed(true) })
+                        DropdownMenuItem(
+                            text = { Text("Despliază toate categoriile") },
+                            onClick = { menuOpen = false; vm.setAllCollapsed(false) })
                     }
                 }
             )
@@ -378,7 +387,8 @@ fun App(vm: AppViewModel) {
 
 @Composable
 private fun MaterialsScreen(vm: AppViewModel) {
-    val collapsed = remember { mutableStateMapOf<Long, Boolean>() }
+    var query by remember { mutableStateOf("") }
+    var onlySelected by remember { mutableStateOf(false) }
     var editMaterial by remember { mutableStateOf<Pair<Category, Material>?>(null) }
     var qtyMaterial by remember { mutableStateOf<Pair<Category, Material>?>(null) }
     var addToCategory by remember { mutableStateOf<Category?>(null) }
@@ -386,44 +396,78 @@ private fun MaterialsScreen(vm: AppViewModel) {
     var deleteCat by remember { mutableStateOf<Category?>(null) }
     var brandCategory by remember { mutableStateOf<Category?>(null) }
 
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-    ) {
-        vm.categories.forEachIndexed { catIndex, cat ->
-            val isCollapsed = collapsed[cat.id] == true
-            item(key = "c${cat.id}") {
-                CategoryHeader(
-                    cat = cat,
-                    collapsed = isCollapsed,
-                    canMoveUp = catIndex > 0,
-                    canMoveDown = catIndex < vm.categories.lastIndex,
-                    onToggle = { collapsed[cat.id] = !isCollapsed },
-                    onAdd = { addToCategory = cat },
-                    onRename = { editCategory = cat },
-                    onDelete = { deleteCat = cat },
-                    onMoveUp = { vm.moveCategory(cat.id, -1) },
-                    onMoveDown = { vm.moveCategory(cat.id, +1) },
-                    onBrand = { brandCategory = cat }
-                )
-            }
-            // la tablou monofazic ascundem componentele trifazice nefolosite
-            // (nu se șterge nimic — reapar la Trifazic sau fără fază setată)
-            val visibleMats = if (cat.phase == "mono")
-                cat.materials.filter { it.qty > 0 || !isTriphasicItem(it.name) }
-            else cat.materials
-            if (!isCollapsed) items(visibleMats, key = { "m${it.id}" }) { mat ->
-                MaterialRow(
-                    mat = mat,
-                    onMinus = { vm.changeQty(cat.id, mat.id, -1) },
-                    onPlus = { vm.changeQty(cat.id, mat.id, +1) },
-                    onEdit = { editMaterial = cat to mat },
-                    onQtyClick = { qtyMaterial = cat to mat }
-                )
-            }
-            item(key = "sp${cat.id}") { Spacer(Modifier.height(10.dp)) }
+    val filterActive = query.isNotBlank() || onlySelected
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.padding(start = 10.dp, end = 10.dp, top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Caută material…") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                trailingIcon = {
+                    if (query.isNotBlank()) IconButton(onClick = { query = "" }) {
+                        Text("✕", fontSize = 16.sp)
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = onlySelected,
+                onClick = { onlySelected = !onlySelected },
+                label = { Text("Bifate") }
+            )
         }
-        item { Spacer(Modifier.height(24.dp)) }
+        LazyColumn(
+            Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+        ) {
+            vm.categories.forEachIndexed { catIndex, cat ->
+                // starea de pliere e persistentă; filtrele o ignoră temporar
+                val isCollapsed = !filterActive && cat.id in vm.collapsedIds
+                // la tablou monofazic ascundem componentele trifazice nefolosite
+                // (nu se șterge nimic — reapar la Trifazic sau fără fază setată)
+                val baseMats = if (cat.phase == "mono")
+                    cat.materials.filter { it.qty > 0 || !isTriphasicItem(it.name) }
+                else cat.materials
+                val shownMats = baseMats.filter { m ->
+                    (!onlySelected || m.qty > 0) &&
+                        (query.isBlank() || m.name.contains(query.trim(), ignoreCase = true))
+                }
+                if (filterActive && shownMats.isEmpty()) return@forEachIndexed
+                item(key = "c${cat.id}") {
+                    CategoryHeader(
+                        cat = cat,
+                        collapsed = isCollapsed,
+                        canMoveUp = catIndex > 0,
+                        canMoveDown = catIndex < vm.categories.lastIndex,
+                        onToggle = { vm.toggleCollapsed(cat.id) },
+                        onAdd = { addToCategory = cat },
+                        onRename = { editCategory = cat },
+                        onDelete = { deleteCat = cat },
+                        onMoveUp = { vm.moveCategory(cat.id, -1) },
+                        onMoveDown = { vm.moveCategory(cat.id, +1) },
+                        onBrand = { brandCategory = cat }
+                    )
+                }
+                if (!isCollapsed) items(shownMats, key = { "m${it.id}" }) { mat ->
+                    MaterialRow(
+                        mat = mat,
+                        onMinus = { vm.changeQty(cat.id, mat.id, -1) },
+                        onPlus = { vm.changeQty(cat.id, mat.id, +1) },
+                        onEdit = { editMaterial = cat to mat },
+                        onQtyClick = { qtyMaterial = cat to mat }
+                    )
+                }
+                item(key = "sp${cat.id}") { Spacer(Modifier.height(10.dp)) }
+            }
+            item { Spacer(Modifier.height(24.dp)) }
+        }
     }
 
     addToCategory?.let { cat ->
@@ -624,16 +668,45 @@ private fun MaterialRow(
     }
 }
 
+/** Buton de cantitate: apăsare = ±1; ținut apăsat = repetă accelerând. */
 @Composable
 private fun QtyButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    FilledTonalButton(
-        onClick = onClick,
-        enabled = enabled,
-        shape = CircleShape,
-        contentPadding = PaddingValues(0.dp),
-        modifier = Modifier.size(42.dp)
+    val currentOnClick by androidx.compose.runtime.rememberUpdatedState(onClick)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val bg = if (enabled) MaterialTheme.colorScheme.secondaryContainer
+    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    val fg = if (enabled) MaterialTheme.colorScheme.onSecondaryContainer
+    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .background(bg, CircleShape)
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures(
+                    onPress = {
+                        // apăsare (sau ținut sub 2 secunde) = exact ±1
+                        currentOnClick()
+                        val job = scope.launch {
+                            // abia după 2 secunde de ținut apăsat începe
+                            // incrementarea automată, lent și apoi accelerând
+                            delay(2000)
+                            var interval = 350L
+                            while (true) {
+                                currentOnClick()
+                                delay(interval)
+                                if (interval > 120) interval -= 20
+                            }
+                        }
+                        tryAwaitRelease()
+                        job.cancel()
+                    }
+                )
+            }
     ) {
-        Text(label, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(label, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = fg)
     }
 }
 
@@ -1228,8 +1301,9 @@ private fun SettingsScreen(
 
         SettingsHeader("PDF")
         SwitchRow(
-            title = "Include dozele modulare în PDF",
-            subtitle = "Dezactivat: dozele se folosesc doar la calculul ramelor și obturatoarelor",
+            title = "Include dozele și tabloul în PDF",
+            subtitle = "Dezactivat: dozele și tabloul sunt deja montate — rămân informative " +
+                "și servesc doar calculelor; nu apar în PDF",
             checked = s.includeBoxesInPdf,
             onChange = { vm.saveSettings(s.copy(includeBoxesInPdf = it)) }
         )

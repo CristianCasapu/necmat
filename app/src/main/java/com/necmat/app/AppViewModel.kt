@@ -164,6 +164,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- starea de pliere a categoriilor (persistentă) ----
+
+    var collapsedIds by mutableStateOf(loadCollapsed())
+        private set
+
+    private fun loadCollapsed(): Set<Long> =
+        (prefs().getStringSet("collapsed_cats", emptySet()) ?: emptySet())
+            .mapNotNull { it.toLongOrNull() }.toSet()
+
+    private fun persistCollapsed() {
+        prefs().edit()
+            .putStringSet("collapsed_cats", collapsedIds.map { it.toString() }.toSet())
+            .apply()
+    }
+
+    fun toggleCollapsed(catId: Long) {
+        collapsedIds = if (catId in collapsedIds) collapsedIds - catId else collapsedIds + catId
+        persistCollapsed()
+    }
+
+    fun setAllCollapsed(collapsed: Boolean) {
+        collapsedIds = if (collapsed) categories.map { it.id }.toSet() else emptySet()
+        persistCollapsed()
+    }
+
     /** Aplică o ordine nouă a categoriilor (după id-uri). */
     fun setCategoryOrder(ids: List<Long>) = update { cats ->
         val byId = cats.associateBy { it.id }
