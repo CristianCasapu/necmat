@@ -339,14 +339,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var updateBusy by mutableStateOf(false)
         private set
 
+    /** Varianta din Play Store nu are self-update — Google Play face actualizările. */
+    val selfUpdateAvailable = BuildConfig.FLAVOR == "github"
+
     /** Verificare silențioasă la pornire (dacă e activată din setări). */
     fun autoCheckUpdate() {
-        if (!settings.autoUpdateCheck) return
+        if (!selfUpdateAvailable || !settings.autoUpdateCheck) return
         viewModelScope.launch { updateInfo = Updater.check() }
     }
 
     /** Verificare manuală; onDone(true) dacă există versiune nouă. */
     fun checkUpdateNow(onDone: (Boolean) -> Unit) {
+        if (!selfUpdateAvailable) {
+            onDone(false)
+            return
+        }
         viewModelScope.launch {
             val info = Updater.check()
             updateInfo = info

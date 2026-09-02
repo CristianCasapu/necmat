@@ -1216,7 +1216,7 @@ private fun SettingsScreen(
             checked = s.clearAfterSave,
             onChange = { vm.saveSettings(s.copy(clearAfterSave = it)) }
         )
-        SwitchRow(
+        if (vm.selfUpdateAvailable) SwitchRow(
             title = "Caută actualizări la pornire",
             subtitle = "Verifică automat GitHub la deschiderea aplicației",
             checked = s.autoUpdateCheck,
@@ -1282,7 +1282,9 @@ private fun SettingsScreen(
             ) {
                 Text("Listă implicită")
             }
-            OutlinedButton(onClick = onCheckUpdates, modifier = Modifier.weight(1f)) {
+            if (vm.selfUpdateAvailable) OutlinedButton(
+                onClick = onCheckUpdates, modifier = Modifier.weight(1f)
+            ) {
                 Text("Caută actualizări")
             }
         }

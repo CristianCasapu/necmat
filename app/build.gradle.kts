@@ -19,8 +19,21 @@ android {
         applicationId = "com.necmat.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
+    }
+
+    // github = distribuție prin GitHub Releases (cu self-update)
+    // play   = distribuție prin Google Play (fără self-update; Play face actualizările)
+    flavorDimensions += "dist"
+    productFlavors {
+        create("github") {
+            dimension = "dist"
+            isDefault = true
+        }
+        create("play") {
+            dimension = "dist"
+        }
     }
 
     signingConfigs {
