@@ -61,6 +61,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             prefs().edit().putBoolean("migr_v4", true).apply()
         }
+        // migrare v5: componentele de tablou din v1.7
+        if (!prefs().getBoolean("migr_v5", false)) {
+            categories = Repo.migrateV5(categories) { newId() }
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+            }
+            prefs().edit().putBoolean("migr_v5", true).apply()
+        }
     }
 
     private fun persist() {

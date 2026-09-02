@@ -268,6 +268,8 @@ object PdfExporter {
                 c.drawRect(tableL, y, tableR, y + ROW_H, gridPaint)
                 val catLabel = buildString {
                     append(cat.name.uppercase(Locale.getDefault()))
+                    if (cat.name.trim().equals("module", ignoreCase = true))
+                        append(" (aparataj modular)")
                     if (cat.brandLabel.isNotEmpty()) append("   —   ").append(cat.brandLabel)
                 }
                 c.drawText(catLabel, colNameL + 6f, y + 14f, catPaint)
@@ -347,9 +349,8 @@ object PdfExporter {
         val (doc, _) = render(pages)
 
         // ---------- scriere fișier ----------
-        val safeName = work.name.replace(Regex("[^\\p{L}\\p{N} _.-]"), "").trim()
-            .ifEmpty { "necesar" }
-        val fileName = "$safeName.pdf"
+        // numele conține titlul, clientul, adresa și data creării lucrării
+        val fileName = pdfFileName(work)
         val dir = File(context.cacheDir, "pdfs").apply { mkdirs() }
         val file = File(dir, fileName)
         file.outputStream().use { doc.writeTo(it) }

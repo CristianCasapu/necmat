@@ -407,7 +407,12 @@ private fun MaterialsScreen(vm: AppViewModel) {
                     onBrand = { brandCategory = cat }
                 )
             }
-            if (!isCollapsed) items(cat.materials, key = { "m${it.id}" }) { mat ->
+            // la tablou monofazic ascundem componentele trifazice nefolosite
+            // (nu se șterge nimic — reapar la Trifazic sau fără fază setată)
+            val visibleMats = if (cat.phase == "mono")
+                cat.materials.filter { it.qty > 0 || !isTriphasicItem(it.name) }
+            else cat.materials
+            if (!isCollapsed) items(visibleMats, key = { "m${it.id}" }) { mat ->
                 MaterialRow(
                     mat = mat,
                     onMinus = { vm.changeQty(cat.id, mat.id, -1) },
@@ -787,6 +792,7 @@ private fun WorkDetailsDialog(
     var address by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var overwriteId by remember { mutableStateOf<Long?>(null) }
+    var filter by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -798,9 +804,21 @@ private fun WorkDetailsDialog(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    OutlinedTextField(
+                        value = filter,
+                        onValueChange = { filter = it },
+                        label = { Text("Caută lucrare (nume, client, adresă)") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    val filtered = works.filter { w ->
+                        filter.isBlank() || listOf(w.name, w.client, w.address)
+                            .any { it.contains(filter.trim(), ignoreCase = true) }
+                    }
                     Column(
                         Modifier
-                            .heightIn(max = 150.dp)
+                            .heightIn(max = 190.dp)
                             .verticalScroll(rememberScrollState())
                     ) {
                         Row(
@@ -815,37 +833,50 @@ private fun WorkDetailsDialog(
                             )
                             Text("Lucrare nouă", style = MaterialTheme.typography.bodyMedium)
                         }
-                        works.forEach { w ->
+                        filtered.forEach { w ->
+                            val select = {
+                                overwriteId = w.id
+                                name = w.name
+                                client = w.client
+                                address = w.address
+                                phone = w.phone
+                            }
                             Row(
                                 Modifier
                                     .fillMaxWidth()
-                                    .clickable {
-                                        overwriteId = w.id
-                                        name = w.name
-                                        client = w.client
-                                        address = w.address
-                                        phone = w.phone
-                                    },
+                                    .clickable { select() },
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 RadioButton(
                                     selected = overwriteId == w.id,
-                                    onClick = {
-                                        overwriteId = w.id
-                                        name = w.name
-                                        client = w.client
-                                        address = w.address
-                                        phone = w.phone
-                                    }
+                                    onClick = select
                                 )
-                                Text(
-                                    "Înlocuiește: ${w.name}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Column {
+                                    Text(
+                                        w.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val sub = listOf(w.client, w.address)
+                                        .filter { it.isNotBlank() }.joinToString("  ·  ")
+                                    if (sub.isNotEmpty()) Text(
+                                        sub,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
+                        if (filtered.isEmpty()) Text(
+                            "Nicio lucrare nu se potrivește căutării.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
                     }
                 }
                 OutlinedTextField(

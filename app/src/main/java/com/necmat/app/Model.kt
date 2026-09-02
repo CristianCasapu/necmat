@@ -4,6 +4,9 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class Material(
     val id: Long,
@@ -90,6 +93,24 @@ data class Work(
     val totalPieces get() = categories.sumOf { c -> c.materials.sumOf { it.qty } }
     val totalValue get() = categories.sumOf { c -> c.materials.sumOf { it.qty * it.price } }
     val hasPrices get() = categories.any { c -> c.materials.any { it.price > 0.0 } }
+}
+
+/** Componentă trifazică după nume (3P, 4P, "trifazic"). */
+fun isTriphasicItem(name: String): Boolean {
+    val n = name.lowercase()
+    return n.contains("trifazic") || n.contains("3p") || n.contains("4p")
+}
+
+/** Numele fișierului PDF: titlu + client + adresă + data creării lucrării. */
+fun pdfFileName(work: Work): String {
+    val df = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+    val parts = listOf(work.name, work.client, work.address, df.format(Date(work.date)))
+        .filter { it.isNotBlank() }
+    val raw = parts.joinToString(" - ")
+        .replace(Regex("[^\\p{L}\\p{N} _.,()+-]"), "")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    return (raw.take(120).ifEmpty { "necesar" }) + ".pdf"
 }
 
 /** Detectează o doză modulară după nume (ex: "Doză 3 module"). */
@@ -492,6 +513,26 @@ object Repo {
         "Bloc distribuție (clemă repartiție)"
     )
 
+    /** Componente de tablou adăugate în v1.7 (rezidențial, piața RO). */
+    private val tablouExtras2 = listOf(
+        "Tablou 1 rând (13 module)", "Tablou 2 rânduri (26 module)",
+        "Tablou 3 rânduri (39 module)",
+        "MCB 3P 16A", "MCB 3P 20A", "MCB 3P 25A", "MCB 3P 32A",
+        "Diferențial cu protecție (RCBO) 1P+N 10A",
+        "Diferențial cu protecție (RCBO) 1P+N 16A",
+        "Diferențial cu protecție (RCBO) 1P+N 20A",
+        "Diferențial cu protecție (RCBO) 1P+N 25A",
+        "Descărcător supratensiune (SPD) Tip 1+2",
+        "Descărcător supratensiune (SPD) Tip 2",
+        "Releu protecție tensiune (min/max)",
+        "Contactor modular 25A",
+        "Sonerie modulară", "Transformator sonerie",
+        "Programator orar modular", "Lampă semnalizare modulară",
+        "Priză modulară pe șină DIN",
+        "Busbar 18 module (pieptene 1P+N)", "Busbar 24 module (pieptene 1P+N)",
+        "Busbar trifazic 18 module (pieptene 3P)"
+    )
+
     private val dozeLegaturiExtras = listOf(
         "Clemă distribuție simplă (4 intrări)", "Clemă distribuție dublă (8 intrări)"
     )
@@ -530,7 +571,7 @@ object Repo {
                     "Pastilă fuzibil 40A", "Diferențial general",
                     "MCB 1P+N 6A", "MCB 1P+N 10A", "MCB 1P+N 16A",
                     "MCB 1P+N 20A", "MCB 1P+N 25A", "MCB 1P+N 32A"
-                ) + tablouExtras).toTypedArray()
+                ) + tablouExtras + tablouExtras2).toTypedArray()
             ),
             cat(
                 "Doze legături",
@@ -570,4 +611,19 @@ object Repo {
         }
         return sortCanonical(augmented)
     }
+
+    /** Migrare v5: componentele de tablou din v1.7. */
+    fun migrateV5(cats: List<Category>, newId: () -> Long): List<Category> =
+        cats.map { c ->
+            if (!c.name.trim().equals("tablou electric", ignoreCase = true)) c
+            else {
+                var out = c
+                tablouExtras2.forEach { name ->
+                    if (out.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                        out = out.copy(materials = out.materials + Material(newId(), name))
+                    }
+                }
+                out
+            }
+        }
 }
