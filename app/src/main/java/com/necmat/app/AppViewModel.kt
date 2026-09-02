@@ -108,6 +108,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             prefs().edit().putBoolean("migr_v9", true).apply()
         }
+        // migrare v10: Priză 2 module
+        if (!prefs().getBoolean("migr_v10", false)) {
+            categories = Repo.migrateV10(categories)
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+            }
+            prefs().edit().putBoolean("migr_v10", true).apply()
+        }
     }
 
     // ---- anulare (undo) pentru ștergeri ----

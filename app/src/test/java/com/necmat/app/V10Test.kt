@@ -12,6 +12,7 @@ class V10Test {
 
     @Test
     fun `latimea in module se citeste din nume`() {
+        assertEquals(2, moduleWidth("Priză 2 module"))
         assertEquals(2, moduleWidth("Priză dublă (2 module)"))
         assertEquals(2, moduleWidth("Priză dublă"))          // regula veche rămâne
         assertEquals(3, moduleWidth("Aparat special (3 module)"))
@@ -62,6 +63,20 @@ class V10Test {
     }
 
     @Test
+    fun `migrarea v10 redenumeste priza dubla in priza 2 module`() {
+        val cats = listOf(
+            Category(1, "Module", listOf(Material(10, "Priză dublă (2 module)", 3))),
+            Category(2, "Aparataj încastrat", listOf(Material(20, "Priză dublă încastrată", 2)))
+        )
+        val result = Repo.migrateV10(cats)
+        val mod = result.first { it.name == "Module" }
+        assertEquals(3, mod.materials.first { it.name == "Priză 2 module" }.qty)
+        // priza dublă clasică (încastrată) NU se redenumește
+        assertTrue(result.first { it.name == "Aparataj încastrat" }
+            .materials.any { it.name == "Priză dublă încastrată" })
+    }
+
+    @Test
     fun `migrarea v7 este idempotenta`() {
         val once = Repo.migrateV7(Repo.defaultCatalog()) { nextId() }
         val twice = Repo.migrateV7(once) { nextId() }
@@ -76,7 +91,8 @@ class V10Test {
         val mod = Repo.defaultCatalog().first { it.name == "Module" }
         assertTrue(mod.materials.any { it.name == "Modul rețea CAT5" })
         assertTrue(mod.materials.any { it.name == "Modul rețea CAT6" })
-        assertTrue(mod.materials.any { it.name == "Priză dublă (2 module)" })
+        assertTrue(mod.materials.any { it.name == "Priză 2 module" })
+        assertFalse(mod.materials.any { it.name == "Priză dublă (2 module)" })
         assertFalse(mod.materials.any { it.name == "Modul rețea (CAT5/6)" })
         val buried = Repo.defaultCatalog().first { it.name == "Aparataj încastrat" }
         assertTrue(buried.materials.any { it.name == "Priză rețea CAT5 încastrată" })

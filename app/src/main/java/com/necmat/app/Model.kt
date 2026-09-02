@@ -799,7 +799,7 @@ object Repo {
             cat(
                 "Module",
                 "Întrerupător simplu", "Cap scară", "Cap cruce",
-                "Priză simplă", "Priză dublă (2 module)",
+                "Priză simplă", "Priză 2 module",
                 "Modul TV", "Modul rețea CAT5", "Modul rețea CAT6"
             ),
             cat(
@@ -826,6 +826,16 @@ object Repo {
             ),
             cat("Corpuri de iluminat (montaj)", *lightingItems.toTypedArray())
         )
+    }
+
+    /** Migrare v10: „Priză dublă (2 module)" devine „Priză 2 module". */
+    fun migrateV10(cats: List<Category>): List<Category> = cats.map { c ->
+        if (!c.name.trim().equals("module", ignoreCase = true)) c
+        else c.copy(materials = c.materials.map { m ->
+            if (m.name.equals("Priză dublă (2 module)", ignoreCase = true) ||
+                m.name.equals("Priză dublă", ignoreCase = true)
+            ) m.copy(name = "Priză 2 module") else m
+        })
     }
 
     /** Migrare v9: dozele de legături pe trepte de circuite. */

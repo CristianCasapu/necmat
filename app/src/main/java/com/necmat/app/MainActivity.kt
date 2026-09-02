@@ -1415,6 +1415,7 @@ private fun SettingsScreen(
     var showBrands by remember { mutableStateOf(false) }
     var showDozaLabor by remember { mutableStateOf(false) }
     var showMaterialPrices by remember { mutableStateOf(false) }
+    var showManageMaterials by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -1570,6 +1571,11 @@ private fun SettingsScreen(
 
         SettingsHeader("Listă și date")
         OutlinedButton(
+            onClick = { showManageMaterials = true },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Gestionare materiale") }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
             onClick = { showBrands = true },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Mărci și modele (${vm.brands.size})") }
@@ -1626,6 +1632,128 @@ private fun SettingsScreen(
     if (showBrands) BrandTableDialog(vm, onDismiss = { showBrands = false })
     if (showDozaLabor) DozaLaborDialog(vm, onDismiss = { showDozaLabor = false })
     if (showMaterialPrices) MaterialPricesDialog(vm, onDismiss = { showMaterialPrices = false })
+    if (showManageMaterials) ManageMaterialsDialog(vm, onDismiss = { showManageMaterials = false })
+}
+
+/** Gestionarea centralizată a materialelor: redenumire, ștergere, adăugare. */
+@Composable
+private fun ManageMaterialsDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    var filter by remember { mutableStateOf("") }
+    var renameTarget by remember { mutableStateOf<Pair<Category, Material>?>(null) }
+    var deleteTarget by remember { mutableStateOf<Pair<Category, Material>?>(null) }
+    var addTarget by remember { mutableStateOf<Category?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Gestionare materiale") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = filter,
+                    onValueChange = { filter = it },
+                    label = { Text("Caută material") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Apasă pe nume pentru redenumire; coșul șterge definitiv.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                Column(
+                    Modifier
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    vm.categories.forEach { cat ->
+                        val mats = cat.materials.filter {
+                            filter.isBlank() ||
+                                it.name.contains(filter.trim(), ignoreCase = true)
+                        }
+                        if (mats.isEmpty() && filter.isNotBlank()) return@forEach
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                cat.name,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { addTarget = cat }) {
+                                Icon(
+                                    Icons.Default.Add, contentDescription = "Adaugă material",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        mats.forEach { mat ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    mat.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { renameTarget = cat to mat }
+                                        .padding(vertical = 7.dp)
+                                )
+                                IconButton(onClick = { deleteTarget = cat to mat }) {
+                                    Icon(
+                                        Icons.Default.Delete, contentDescription = "Șterge",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Gata") } }
+    )
+
+    renameTarget?.let { (cat, mat) ->
+        TextDialog(
+            title = "Redenumește materialul",
+            label = "Nume material",
+            initial = mat.name,
+            onDismiss = { renameTarget = null },
+            onConfirm = { newName ->
+                vm.updateMaterial(cat.id, mat.id, newName, mat.price)
+                renameTarget = null
+            }
+        )
+    }
+    deleteTarget?.let { (cat, mat) ->
+        ConfirmDialog(
+            title = "Ștergi „${mat.name}”?",
+            text = "Materialul dispare definitiv din categoria „${cat.name}”.",
+            onDismiss = { deleteTarget = null },
+            onConfirm = {
+                vm.deleteMaterial(cat.id, mat.id)
+                deleteTarget = null
+            }
+        )
+    }
+    addTarget?.let { cat ->
+        TextDialog(
+            title = "Material nou în ${cat.name}",
+            label = "Nume material",
+            onDismiss = { addTarget = null },
+            onConfirm = { vm.addMaterial(cat.id, it); addTarget = null }
+        )
+    }
 }
 
 /** Prețurile de achiziție ale materialelor, editabile centralizat. */
