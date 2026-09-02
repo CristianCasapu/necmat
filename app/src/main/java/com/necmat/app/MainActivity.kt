@@ -55,6 +55,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -95,6 +96,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.necmat.app.ui.NecMatTheme
+import kotlinx.coroutines.delay
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -316,9 +318,12 @@ fun App(vm: AppViewModel) {
         onDismiss = { confirmReset = false },
         onConfirm = { vm.resetQuantities(); confirmReset = false }
     )
-    if (confirmDefaults) ConfirmDialog(
-        title = "Restaurezi lista implicită?",
-        text = "Toate categoriile și materialele tale vor fi înlocuite cu lista inițială.",
+    if (confirmDefaults) CountdownConfirmDialog(
+        title = "⚠️ Restaurezi lista implicită?",
+        text = "Se ȘTERG toate categoriile și materialele tale — inclusiv cantitățile, " +
+            "prețurile, mărcile și ordinea setată — și se înlocuiesc cu lista inițială " +
+            "a aplicației.\n\nLucrările salvate NU sunt afectate.",
+        confirmLabel = "Restaurează",
         onDismiss = { confirmDefaults = false },
         onConfirm = { vm.restoreDefaults(); confirmDefaults = false }
     )
@@ -467,8 +472,8 @@ private fun MaterialsScreen(vm: AppViewModel) {
             cat = cat,
             brands = vm.brands,
             onDismiss = { brandCategory = null },
-            onSave = { brand, model ->
-                vm.setCategoryBrand(cat.id, brand, model)
+            onSave = { brand, model, phase ->
+                vm.setCategoryBrand(cat.id, brand, model, phase)
                 brandCategory = null
             }
         )
@@ -743,11 +748,17 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
     if (showSave) WorkDetailsDialog(
         title = "Salvează lucrarea",
         confirmLabel = "Salvează",
+        works = vm.works,
         onDismiss = { showSave = false },
-        onConfirm = { name, client, address, phone ->
+        onConfirm = { name, client, address, phone, overwriteId ->
             showSave = false
-            if (vm.saveWork(name, client, address, phone)) {
-                Toast.makeText(context, "Lucrare salvată: $name", Toast.LENGTH_SHORT).show()
+            if (vm.saveWork(name, client, address, phone, overwriteId)) {
+                Toast.makeText(
+                    context,
+                    if (overwriteId != null) "Lucrare actualizată: $name"
+                    else "Lucrare salvată: $name",
+                    Toast.LENGTH_SHORT
+                ).show()
                 onSaved()
             }
         }
@@ -756,7 +767,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
         title = "Detalii pentru PDF",
         confirmLabel = "Generează PDF",
         onDismiss = { showPdfName = false },
-        onConfirm = { name, client, address, phone ->
+        onConfirm = { name, client, address, phone, _ ->
             showPdfName = false
             exportPdfAndShare(context, vm, vm.snapshot(name, client, address, phone))
         }
@@ -767,18 +778,76 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
 private fun WorkDetailsDialog(
     title: String,
     confirmLabel: String,
+    works: List<Work> = emptyList(),
     onDismiss: () -> Unit,
-    onConfirm: (String, String, String, String) -> Unit
+    onConfirm: (String, String, String, String, Long?) -> Unit
 ) {
     var name by remember { mutableStateOf("Necesar materiale ") }
     var client by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
+    var overwriteId by remember { mutableStateOf<Long?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (works.isNotEmpty()) {
+                    Text(
+                        "Salvează ca:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Column(
+                        Modifier
+                            .heightIn(max = 150.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { overwriteId = null },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = overwriteId == null,
+                                onClick = { overwriteId = null }
+                            )
+                            Text("Lucrare nouă", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        works.forEach { w ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        overwriteId = w.id
+                                        name = w.name
+                                        client = w.client
+                                        address = w.address
+                                        phone = w.phone
+                                    },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = overwriteId == w.id,
+                                    onClick = {
+                                        overwriteId = w.id
+                                        name = w.name
+                                        client = w.client
+                                        address = w.address
+                                        phone = w.phone
+                                    }
+                                )
+                                Text(
+                                    "Înlocuiește: ${w.name}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text("Nume lucrare (ex: Casa familia Ciuvică)") },
@@ -805,7 +874,9 @@ private fun WorkDetailsDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { if (name.isNotBlank()) onConfirm(name, client, address, phone) },
+                onClick = {
+                    if (name.isNotBlank()) onConfirm(name, client, address, phone, overwriteId)
+                },
                 enabled = name.isNotBlank()
             ) { Text(confirmLabel) }
         },
@@ -900,7 +971,8 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit) {
                             }
                         }
                     }
-                    Row(
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
                         Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.End
                     ) {
@@ -1198,7 +1270,16 @@ private fun SettingsScreen(
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onRestoreDefaults, modifier = Modifier.weight(1f)) {
+            OutlinedButton(
+                onClick = onRestoreDefaults,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp, MaterialTheme.colorScheme.error
+                ),
+                modifier = Modifier.weight(1f)
+            ) {
                 Text("Listă implicită")
             }
             OutlinedButton(onClick = onCheckUpdates, modifier = Modifier.weight(1f)) {
@@ -1259,9 +1340,13 @@ private fun SwitchRow(
 
 @Composable
 private fun ReorderCategoriesDialog(vm: AppViewModel, onDismiss: () -> Unit) {
-    var dragIndex by remember { mutableStateOf(-1) }
+    // listă locală: reordonăm aici și aplicăm la "Gata"
+    val order = remember {
+        androidx.compose.runtime.mutableStateListOf<Category>().apply { addAll(vm.categories) }
+    }
+    var draggedId by remember { mutableStateOf<Long?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
-    val rowHeightPx = with(LocalDensity.current) { 52.dp.toPx() }
+    val rowHeightPx = with(LocalDensity.current) { 54.dp.toPx() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1273,77 +1358,85 @@ private fun ReorderCategoriesDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    "Ține apăsat pe o categorie și trage-o în sus sau în jos.",
+                    "Ține apăsat pe o categorie și trage-o în sus sau în jos, apoi apasă Salvează.",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
-                vm.categories.forEachIndexed { idx, cat ->
-                    val isDragged = idx == dragIndex
-                    Surface(
-                        color = if (isDragged) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(10.dp),
-                        tonalElevation = if (isDragged) 6.dp else 0.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp)
-                            .zIndex(if (isDragged) 1f else 0f)
-                            .graphicsLayer {
-                                translationY = if (isDragged) dragOffset else 0f
-                            }
-                            .pointerInput(cat.id) {
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = {
-                                        dragIndex = vm.categories.indexOfFirst { it.id == cat.id }
-                                        dragOffset = 0f
-                                    },
-                                    onDrag = { change, amount ->
-                                        change.consume()
-                                        dragOffset += amount.y
-                                        val from = dragIndex
-                                        val steps = (dragOffset / rowHeightPx).roundToInt()
-                                        if (steps != 0 && from >= 0) {
-                                            val to = (from + steps)
-                                                .coerceIn(0, vm.categories.lastIndex)
-                                            if (to != from) {
-                                                vm.moveCategoryTo(from, to)
-                                                dragIndex = to
-                                                dragOffset -= (to - from) * rowHeightPx
+                order.forEach { cat ->
+                    androidx.compose.runtime.key(cat.id) {
+                        val isDragged = cat.id == draggedId
+                        Surface(
+                            color = if (isDragged) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(10.dp),
+                            tonalElevation = if (isDragged) 6.dp else 0.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp)
+                                .zIndex(if (isDragged) 1f else 0f)
+                                .graphicsLayer {
+                                    translationY = if (isDragged) dragOffset else 0f
+                                }
+                                .pointerInput(Unit) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            draggedId = cat.id
+                                            dragOffset = 0f
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragOffset += amount.y
+                                            val from = order.indexOfFirst { it.id == cat.id }
+                                            val steps = (dragOffset / rowHeightPx).roundToInt()
+                                            if (steps != 0 && from >= 0) {
+                                                val to = (from + steps)
+                                                    .coerceIn(0, order.lastIndex)
+                                                if (to != from) {
+                                                    val item = order.removeAt(from)
+                                                    order.add(to, item)
+                                                    dragOffset -= (to - from) * rowHeightPx
+                                                }
                                             }
-                                        }
-                                    },
-                                    onDragEnd = { dragIndex = -1; dragOffset = 0f },
-                                    onDragCancel = { dragIndex = -1; dragOffset = 0f }
+                                        },
+                                        onDragEnd = { draggedId = null; dragOffset = 0f },
+                                        onDragCancel = { draggedId = null; dragOffset = 0f }
+                                    )
+                                }
+                        ) {
+                            Row(
+                                Modifier
+                                    .heightIn(min = 48.dp)
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Menu, contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    cat.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 10.dp)
                                 )
                             }
-                    ) {
-                        Row(
-                            Modifier
-                                .heightIn(min = 48.dp)
-                                .padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Menu, contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                cat.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(start = 10.dp)
-                            )
                         }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Gata") } }
+        confirmButton = {
+            TextButton(onClick = {
+                vm.setCategoryOrder(order.map { it.id })
+                onDismiss()
+            }) { Text("Salvează") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Anulează") } }
     )
 }
 
@@ -1352,14 +1445,24 @@ private fun CategoryBrandDialog(
     cat: Category,
     brands: List<BrandEntry>,
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit
+    onSave: (String, String, String) -> Unit
 ) {
     var brand by remember { mutableStateOf(cat.brand) }
     var model by remember { mutableStateOf(cat.model) }
+    var phase by remember { mutableStateOf(cat.phase) }
+    var smartMode by remember { mutableStateOf(false) }
     val group = remember(cat.name) { BrandGroups.infer(cat.name) }
-    val suggestions = remember(brands, group) {
-        brands.filter { group in it.groups }.sortedBy { it.label } +
-            brands.filter { group !in it.groups }.sortedBy { it.label }
+    val showSmartFilter = group in listOf(
+        BrandGroups.MODULAR, BrandGroups.APARATAJ, BrandGroups.TABLOU
+    )
+    val suggestions = remember(brands, group, smartMode) {
+        if (smartMode) {
+            brands.filter { BrandGroups.SMART in it.groups }.sortedBy { it.label }
+        } else {
+            val classic = brands.filter { BrandGroups.SMART !in it.groups }
+            classic.filter { group in it.groups }.sortedBy { it.label } +
+                classic.filter { group !in it.groups }.sortedBy { it.label }
+        }
     }
 
     AlertDialog(
@@ -1378,11 +1481,48 @@ private fun CategoryBrandDialog(
                     label = { Text("Model / serie") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
+                if (group == BrandGroups.TABLOU) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        listOf("" to "—", "mono" to "Monofazic", "tri" to "Trifazic")
+                            .forEach { (value, label) ->
+                                Row(
+                                    Modifier
+                                        .weight(1f)
+                                        .clickable { phase = value },
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = phase == value,
+                                        onClick = { phase = value }
+                                    )
+                                    Text(label, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                    }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 8.dp)
+                ) {
+                    if (showSmartFilter) {
+                        FilterChip(
+                            selected = !smartMode,
+                            onClick = { smartMode = false },
+                            label = { Text("Clasic") }
+                        )
+                        FilterChip(
+                            selected = smartMode,
+                            onClick = { smartMode = true },
+                            label = { Text("Smart") }
+                        )
+                    }
+                }
                 Text(
-                    "Sugestii (${BrandGroups.label(group)} întâi):",
+                    if (smartMode) "Sugestii aparataj smart:"
+                    else "Sugestii (${BrandGroups.label(group)} întâi):",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                    modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)
                 )
                 Column(
                     Modifier
@@ -1425,12 +1565,12 @@ private fun CategoryBrandDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(brand, model) }) { Text("Salvează") }
+            TextButton(onClick = { onSave(brand, model, phase) }) { Text("Salvează") }
         },
         dismissButton = {
             Row {
                 if (cat.brandLabel.isNotEmpty()) TextButton(
-                    onClick = { onSave("", "") },
+                    onClick = { onSave("", "", "") },
                     colors = ButtonDefaults.textButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
                     )
@@ -1615,6 +1755,42 @@ private fun DeleteChoiceDialog(
             }
         },
         confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Anulează") } }
+    )
+}
+
+@Composable
+private fun CountdownConfirmDialog(
+    title: String,
+    text: String,
+    confirmLabel: String,
+    seconds: Int = 10,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    var remaining by remember { mutableStateOf(seconds) }
+    LaunchedEffect(Unit) {
+        while (remaining > 0) {
+            delay(1000)
+            remaining--
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, color = MaterialTheme.colorScheme.error) },
+        text = { Text(text) },
+        confirmButton = {
+            Button(
+                enabled = remaining == 0,
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError
+                )
+            ) {
+                Text(if (remaining > 0) "$confirmLabel ($remaining)" else confirmLabel)
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Anulează") } }
     )
 }

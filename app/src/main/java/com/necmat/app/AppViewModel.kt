@@ -51,6 +51,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             prefs().edit().putBoolean("migr_v3", true).apply()
         }
+        // migrare v4: materiale tablou/doze legături + ordinea canonică + mărci noi
+        if (!prefs().getBoolean("migr_v4", false)) {
+            categories = Repo.migrateV4(categories) { newId() }
+            brands = Repo.mergeBrands(brands, Repo.seedBrands())
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+                Repo.saveBrands(getApplication(), brands)
+            }
+            prefs().edit().putBoolean("migr_v4", true).apply()
+        }
     }
 
     private fun persist() {
@@ -146,6 +156,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Aplică o ordine nouă a categoriilor (după id-uri). */
+    fun setCategoryOrder(ids: List<Long>) = update { cats ->
+        val byId = cats.associateBy { it.id }
+        val ordered = ids.mapNotNull { byId[it] }
+        ordered + cats.filter { c -> ids.none { it == c.id } }
+    }
+
     fun resetQuantities() = update { cats ->
         cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
     }
@@ -179,11 +196,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         phone = phone.trim()
     )
 
-    /** Salvează lucrarea; una existentă cu același nume este înlocuită. */
-    fun saveWork(name: String, client: String, address: String, phone: String): Boolean {
+    /**
+     * Salvează lucrarea. Cu overwriteId, înlocuiește complet lucrarea respectivă;
+     * altfel, una existentă cu același nume este înlocuită.
+     */
+    fun saveWork(
+        name: String,
+        client: String,
+        address: String,
+        phone: String,
+        overwriteId: Long? = null
+    ): Boolean {
         val w = snapshot(name, client, address, phone)
         if (w.categories.isEmpty()) return false
-        works = upsertWork(works, w)
+        works = replaceWork(works, w, overwriteId)
         persistWorks()
         if (settings.clearAfterSave) resetQuantities()
         return true
@@ -227,15 +253,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                 }
-                if (wc.brand.isNotBlank() || wc.model.isNotBlank()) {
-                    target = target.copy(brand = wc.brand, model = wc.model)
+                if (wc.brand.isNotBlank() || wc.model.isNotBlank() || wc.phase.isNotBlank()) {
+                    target = target.copy(brand = wc.brand, model = wc.model, phase = wc.phase)
                 }
                 result = result.mapIndexed { i, c -> if (i == idx) target else c }
             } else {
                 result = result + Category(
                     newId(), wc.name,
                     wc.materials.map { Material(newId(), it.name, it.qty, it.price) },
-                    brand = wc.brand, model = wc.model
+                    brand = wc.brand, model = wc.model, phase = wc.phase
                 )
             }
         }
@@ -279,12 +305,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         persistBrands()
     }
 
-    /** Setează marca și modelul unei categorii. */
-    fun setCategoryBrand(catId: Long, brand: String, model: String) = update { cats ->
-        cats.map { c ->
-            if (c.id != catId) c else c.copy(brand = brand.trim(), model = model.trim())
+    /** Setează marca, modelul și faza unei categorii. */
+    fun setCategoryBrand(catId: Long, brand: String, model: String, phase: String = "") =
+        update { cats ->
+            cats.map { c ->
+                if (c.id != catId) c
+                else c.copy(brand = brand.trim(), model = model.trim(), phase = phase)
+            }
         }
-    }
 
     // ---- backup / restaurare ----
 

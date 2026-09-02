@@ -17,10 +17,22 @@ data class Category(
     val name: String,
     val materials: List<Material> = emptyList(),
     val brand: String = "",
-    val model: String = ""
+    val model: String = "",
+    val phase: String = ""   // "", "mono" sau "tri" (pentru tablou)
 ) {
     /** "Gewiss Chorus" sau "" dacă nu e setată marca. */
-    val brandLabel get() = listOf(brand, model).filter { it.isNotBlank() }.joinToString(" ")
+    val brandLabel: String
+        get() {
+            val b = listOf(brand, model).filter { it.isNotBlank() }.joinToString(" ")
+            val p = phaseLabel
+            return listOf(b, p).filter { it.isNotBlank() }.joinToString(" · ")
+        }
+
+    val phaseLabel get() = when (phase) {
+        "mono" -> "Monofazic"
+        "tri" -> "Trifazic"
+        else -> ""
+    }
 }
 
 /** O marcă + serie/model, cu grupurile de materiale cărora li se aplică. */
@@ -39,14 +51,16 @@ object BrandGroups {
     const val APARATAJ = "aparataj"
     const val TABLOU = "tablou"
     const val INSTALATIE = "instalatie"
+    const val SMART = "smart"
 
-    val all = listOf(MODULAR, APARATAJ, TABLOU, INSTALATIE)
+    val all = listOf(MODULAR, APARATAJ, TABLOU, INSTALATIE, SMART)
 
     fun label(group: String): String = when (group) {
         MODULAR -> "Aparataj modular"
         APARATAJ -> "Aparataj clasic"
         TABLOU -> "Tablou electric"
         INSTALATIE -> "Doze / tuburi / instalație"
+        SMART -> "Aparataj smart"
         else -> group
     }
 
@@ -99,6 +113,16 @@ fun Work.filterForPdf(includeBoxes: Boolean): Work {
 /** Adaugă lucrarea în listă; o lucrare existentă cu același nume este înlocuită. */
 fun upsertWork(works: List<Work>, w: Work): List<Work> =
     listOf(w) + works.filterNot { it.name.trim().equals(w.name.trim(), ignoreCase = true) }
+
+/**
+ * Înlocuiește complet lucrarea cu id-ul dat (nume + toate detaliile).
+ * Dacă overwriteId nu există în listă, lucrarea e adăugată normal (după nume).
+ */
+fun replaceWork(works: List<Work>, w: Work, overwriteId: Long?): List<Work> {
+    if (overwriteId == null || works.none { it.id == overwriteId }) return upsertWork(works, w)
+    return listOf(w.copy(id = overwriteId)) +
+        works.filterNot { it.id == overwriteId || it.name.trim().equals(w.name.trim(), ignoreCase = true) }
+}
 
 /**
  * Migrare v3: adaugă materialele noi (module TV/rețea, aparataj îngropat)
@@ -211,7 +235,7 @@ object Repo {
             )
         }
         return JSONObject().put("id", c.id).put("name", c.name).put("materials", mats)
-            .put("brand", c.brand).put("model", c.model)
+            .put("brand", c.brand).put("model", c.model).put("phase", c.phase)
     }
 
     private fun catFromJson(c: JSONObject): Category {
@@ -227,7 +251,8 @@ object Repo {
                 )
             },
             brand = c.optString("brand", ""),
-            model = c.optString("model", "")
+            model = c.optString("model", ""),
+            phase = c.optString("phase", "")
         )
     }
 
@@ -372,8 +397,32 @@ object Repo {
             be(50, "Kopos", "", i),
             be(51, "Gewiss", "GW", i),
             be(52, "Elettrocanali", "", i),
-            be(53, "Courbi", "", i)
+            be(53, "Courbi", "", i),
+            be(54, "Schrack", "", t, i),
+            be(55, "Wago", "", i),
+            // aparataj și tablou smart / automatizări
+            be(60, "Shelly", "", BrandGroups.SMART, t),
+            be(61, "Sonoff", "", BrandGroups.SMART, t),
+            be(62, "Livolo", "", BrandGroups.SMART, a),
+            be(63, "Legrand", "Valena Life with Netatmo", BrandGroups.SMART, a),
+            be(64, "bTicino", "Living Now with Netatmo", BrandGroups.SMART, m),
+            be(65, "Schneider Electric", "Wiser", BrandGroups.SMART),
+            be(66, "Tuya", "", BrandGroups.SMART),
+            be(67, "F&F", "", t),
+            be(68, "Finder", "", t),
+            be(69, "Chint", "", t)
         )
+    }
+
+    /** Adaugă în lista existentă intrările din seed care lipsesc (după marcă + serie). */
+    fun mergeBrands(existing: List<BrandEntry>, additions: List<BrandEntry>): List<BrandEntry> {
+        val known = existing.map { it.brand.lowercase() to it.series.lowercase() }.toSet()
+        val maxId = (existing.maxOfOrNull { it.id } ?: 0L)
+        var nextId = maxId + 1
+        val missing = additions
+            .filter { (it.brand.lowercase() to it.series.lowercase()) !in known }
+            .map { it.copy(id = nextId++) }
+        return existing + missing
     }
 
     // ---- backup / restaurare ----
@@ -424,30 +473,35 @@ object Repo {
     private fun cat(name: String, vararg items: String) =
         Category(nid(), name, items.map { Material(nid(), it) })
 
+    /** Ordinea canonică de afișare a categoriilor. */
+    val canonicalOrder = listOf(
+        "Doze aparat îngropate",
+        "Aparataj îngropat",
+        "Doze modulare",
+        "Module",
+        "Aparataj aplicat",
+        "Tablou electric",
+        "Doze legături",
+        "Cabluri și tuburi (m)"
+    )
+
+    private val tablouExtras = listOf(
+        "Separator trifazic (4P)", "Diferențial general trifazic (4P)",
+        "Releu monitorizare fază", "ATS (comutare automată rețea-generator)",
+        "Busbar 13 module (pieptene 1P+N)", "Busbar trifazic (pieptene 3P)",
+        "Bloc distribuție (clemă repartiție)"
+    )
+
+    private val dozeLegaturiExtras = listOf(
+        "Clemă distribuție simplă (4 intrări)", "Clemă distribuție dublă (8 intrări)"
+    )
+
     fun defaultCatalog(): List<Category> {
         nextId = 1L
         return listOf(
             cat(
-                "Doze modulare",
-                "Doză 2 module", "Doză 3 module", "Doză 4 module",
-                "Doză 5 module", "Doză 7 module"
-            ),
-            cat(
                 "Doze aparat îngropate",
                 "Doză aparat pentru priză", "Doză aparat pentru întrerupător"
-            ),
-            cat(
-                "Doze legături",
-                "Doză simplă", "Doză dublă", "Doză îngropată"
-            ),
-            cat(
-                "Aparataj aplicat",
-                "Priză aplicată", "Întrerupător aplicat"
-            ),
-            cat(
-                "Module",
-                "Întrerupător simplu", "Cap scară", "Cap cruce",
-                "Priză simplă", "Priză dublă", "Modul TV", "Modul rețea (CAT5/6)"
             ),
             cat(
                 "Aparataj îngropat",
@@ -456,16 +510,64 @@ object Repo {
                 "Priză rețea (CAT5/6) îngropată", "Priză TV îngropată"
             ),
             cat(
+                "Doze modulare",
+                "Doză 2 module", "Doză 3 module", "Doză 4 module",
+                "Doză 5 module", "Doză 7 module"
+            ),
+            cat(
+                "Module",
+                "Întrerupător simplu", "Cap scară", "Cap cruce",
+                "Priză simplă", "Priză dublă", "Modul TV", "Modul rețea (CAT5/6)"
+            ),
+            cat(
+                "Aparataj aplicat",
+                "Priză aplicată", "Întrerupător aplicat"
+            ),
+            cat(
                 "Tablou electric",
-                "Separator cu fuzibili", "Pastilă fuzibil 25A", "Pastilă fuzibil 32A",
-                "Pastilă fuzibil 40A", "Diferențial general",
-                "MCB 1P+N 6A", "MCB 1P+N 10A", "MCB 1P+N 16A",
-                "MCB 1P+N 20A", "MCB 1P+N 25A", "MCB 1P+N 32A"
+                *(listOf(
+                    "Separator cu fuzibili", "Pastilă fuzibil 25A", "Pastilă fuzibil 32A",
+                    "Pastilă fuzibil 40A", "Diferențial general",
+                    "MCB 1P+N 6A", "MCB 1P+N 10A", "MCB 1P+N 16A",
+                    "MCB 1P+N 20A", "MCB 1P+N 25A", "MCB 1P+N 32A"
+                ) + tablouExtras).toTypedArray()
+            ),
+            cat(
+                "Doze legături",
+                *(listOf("Doză simplă", "Doză dublă", "Doză îngropată") +
+                    dozeLegaturiExtras).toTypedArray()
             ),
             cat(
                 "Cabluri și tuburi (m)",
                 "Cablu CYY-F 3x1.5", "Cablu CYY-F 3x2.5", "Tub copex Ø16", "Tub copex Ø20"
             )
         )
+    }
+
+    /** Ordonează categoriile după ordinea canonică; cele necunoscute rămân la coadă. */
+    fun sortCanonical(cats: List<Category>): List<Category> {
+        val rank = canonicalOrder.mapIndexed { i, n -> n.lowercase() to i }.toMap()
+        return cats.sortedBy { rank[it.name.trim().lowercase()] ?: Int.MAX_VALUE }
+    }
+
+    /** Migrare v4: materiale noi pentru tablou și doze legături + ordinea canonică. */
+    fun migrateV4(cats: List<Category>, newId: () -> Long): List<Category> {
+        fun addMissing(c: Category, items: List<String>): Category {
+            var out = c
+            items.forEach { name ->
+                if (out.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                    out = out.copy(materials = out.materials + Material(newId(), name))
+                }
+            }
+            return out
+        }
+        val augmented = cats.map { c ->
+            when (c.name.trim().lowercase()) {
+                "tablou electric" -> addMissing(c, tablouExtras)
+                "doze legături" -> addMissing(c, dozeLegaturiExtras)
+                else -> c
+            }
+        }
+        return sortCanonical(augmented)
     }
 }
