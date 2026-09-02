@@ -21,7 +21,8 @@ data class AppSettings(
     val autoAccessories: Boolean = true,
     val clearAfterSave: Boolean = true,
     val autoUpdateCheck: Boolean = true,
-    val detailExpensesInOffer: Boolean = false
+    val detailExpensesInOffer: Boolean = false,
+    val materialPrices: Boolean = false
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -520,7 +521,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             autoAccessories = p.getBoolean("auto_acc", true),
             clearAfterSave = p.getBoolean("clear_after_save", true),
             autoUpdateCheck = p.getBoolean("auto_update", true),
-            detailExpensesInOffer = p.getBoolean("offer_detail", false)
+            detailExpensesInOffer = p.getBoolean("offer_detail", false),
+            materialPrices = p.getBoolean("mat_prices", false)
         )
     }
 
@@ -535,12 +537,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("clear_after_save", s.clearAfterSave)
             .putBoolean("auto_update", s.autoUpdateCheck)
             .putBoolean("offer_detail", s.detailExpensesInOffer)
+            .putBoolean("mat_prices", s.materialPrices)
             .apply()
     }
 
     /** Lucrarea pregătită pentru PDF, conform setărilor. */
     fun preparePdfWork(work: Work): Work {
         val withAcc = if (settings.autoAccessories) work.withAutoAccessories() else work
-        return withAcc.filterForPdf(settings.includeBoxesInPdf)
+        val filtered = withAcc.filterForPdf(settings.includeBoxesInPdf)
+        // prețurile de achiziție apar doar dacă sunt activate din Setări
+        return if (settings.materialPrices) filtered
+        else filtered.copy(categories = filtered.categories.map { c ->
+            c.copy(materials = c.materials.map { it.copy(price = 0.0) })
+        })
     }
 }

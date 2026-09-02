@@ -558,6 +558,7 @@ private fun MaterialsScreen(vm: AppViewModel, onDeleted: (String) -> Unit) {
     editMaterial?.let { (cat, mat) ->
         EditMaterialDialog(
             mat = mat,
+            showPrice = vm.settings.materialPrices,
             onDismiss = { editMaterial = null },
             onSave = { name, price ->
                 vm.updateMaterial(cat.id, mat.id, name, price); editMaterial = null
@@ -875,7 +876,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (totalValue > 0.0) Text(
+                if (vm.settings.materialPrices && totalValue > 0.0) Text(
                     "Valoare estimată: ${String.format(Locale.US, "%.2f", totalValue)} lei",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
@@ -1166,7 +1167,8 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
                     Text(
                         buildString {
                             append("${df.format(Date(work.date))}  ·  ${work.totalTypes} tipuri  ·  ${work.totalPieces} buc")
-                            if (work.hasPrices) append("  ·  ${String.format(Locale.US, "%.2f", work.totalValue)} lei")
+                            if (vm.settings.materialPrices && work.hasPrices)
+                                append("  ·  ${String.format(Locale.US, "%.2f", work.totalValue)} lei")
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1330,6 +1332,7 @@ private fun NumberDialog(
 @Composable
 private fun EditMaterialDialog(
     mat: Material,
+    showPrice: Boolean,
     onDismiss: () -> Unit,
     onSave: (String, Double) -> Unit,
     onRemoveFromWork: () -> Unit,
@@ -1363,7 +1366,7 @@ private fun EditMaterialDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
+                if (showPrice) OutlinedTextField(
                     value = priceText,
                     onValueChange = { v ->
                         priceText = v.replace(',', '.')
@@ -1479,11 +1482,21 @@ private fun SettingsScreen(
         ) {
             Text("Manoperă doze + corpuri iluminat (${vm.labor.dozaPrices.count { it.value > 0 }} setate)")
         }
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = { showMaterialPrices = true },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Prețuri materiale") }
+        Spacer(Modifier.height(4.dp))
+        SwitchRow(
+            title = "Prețuri de achiziție materiale",
+            subtitle = "Dezactivat: prețurile materialelor sunt ascunse peste tot — " +
+                "clientul primește doar lista și își cumpără singur materialele",
+            checked = s.materialPrices,
+            onChange = { vm.saveSettings(s.copy(materialPrices = it)) }
+        )
+        if (s.materialPrices) {
+            Spacer(Modifier.height(4.dp))
+            OutlinedButton(
+                onClick = { showMaterialPrices = true },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Prețuri materiale") }
+        }
         Spacer(Modifier.height(4.dp))
         SwitchRow(
             title = "Detaliază cheltuielile în oferta PDF",
