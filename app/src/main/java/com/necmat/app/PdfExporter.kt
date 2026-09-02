@@ -385,4 +385,250 @@ object PdfExporter {
         )
         return Result(shareUri, savedToDownloads, fileName)
     }
+
+    /** Ofertă de manoperă: montaj doze + echipare tablou + deplasare/mâncare/consumabile. */
+    fun exportLaborQuote(
+        context: Context,
+        work: Work,
+        quote: LaborQuote,
+        installerName: String = "",
+        installerPhone: String = "",
+        installerCompany: String = "",
+        detailExpenses: Boolean = false
+    ): Result {
+        val doc = PdfDocument()
+        val bandText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 15f; color = Color.WHITE
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            letterSpacing = 0.08f
+        }
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 17f; color = TEXT
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 10f; color = TEXT_MUTED }
+        val thPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 10.5f; color = Color.WHITE
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val catPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 11.5f; color = ACCENT
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val itemPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 10.5f; color = TEXT }
+        val itemBold = Paint(itemPaint).apply {
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val centerBold = Paint(itemBold).apply { textAlign = Paint.Align.CENTER }
+        val centerText = Paint(itemPaint).apply { textAlign = Paint.Align.CENTER }
+        val gridPaint = Paint().apply { color = GRID; strokeWidth = 0.7f; style = Paint.Style.STROKE }
+        val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 8.5f; color = TEXT_MUTED; textAlign = Paint.Align.CENTER
+        }
+        val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 8.5f; color = TEXT_MUTED
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+        }
+        val fillPaint = Paint()
+
+        val tableL = MARGIN
+        val tableR = PAGE_W - MARGIN
+        val colVal = 80f
+        val colPU = 70f
+        val colQty = 55f
+        val colValL = tableR - colVal
+        val colPUL = colValL - colPU
+        val colQtyL = colPUL - colQty
+        val nameWidth = colQtyL - tableL - 14f
+        fun money(v: Double) = String.format(Locale.US, "%.2f", v)
+        val df = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+
+        fun wrap(text: String, paint: Paint, width: Float): List<String> {
+            val lines = mutableListOf<String>()
+            var rest = text.trim()
+            while (rest.isNotEmpty()) {
+                val n = paint.breakText(rest, true, width, null)
+                if (n <= 0) break
+                var cut = n
+                if (n < rest.length) {
+                    val lastSpace = rest.substring(0, n).lastIndexOf(' ')
+                    if (lastSpace > 0) cut = lastSpace
+                }
+                lines.add(rest.substring(0, cut).trim())
+                rest = rest.substring(cut).trim()
+            }
+            return lines.ifEmpty { listOf("") }
+        }
+
+        val page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_W.toInt(), PAGE_H.toInt(), 1).create())
+        val c = page.canvas
+        var y: Float
+
+        fillPaint.color = ACCENT
+        c.drawRect(0f, 0f, PAGE_W, 54f, fillPaint)
+        c.drawText("OFERTĂ MANOPERĂ", MARGIN, 34f, bandText)
+
+        val hasInstaller = installerName.isNotBlank() || installerPhone.isNotBlank() ||
+            installerCompany.isNotBlank()
+        var boxBottom = 60f
+        var titleWidth = tableR - tableL
+        if (hasInstaller) {
+            val boxW = 215f
+            val boxL = tableR - boxW
+            val pad = 9f
+            val innerW = boxW - 2 * pad
+            val infoLines = mutableListOf<Pair<String, Paint>>()
+            if (installerCompany.isNotBlank())
+                wrap(installerCompany, itemBold, innerW).forEach { infoLines += it to itemBold }
+            if (installerName.isNotBlank()) {
+                val p = if (installerCompany.isBlank()) itemBold else itemPaint
+                wrap("Instalator: $installerName", p, innerW).forEach { infoLines += it to p }
+            }
+            if (installerPhone.isNotBlank()) infoLines += "Telefon: $installerPhone" to itemPaint
+            val noteLines = wrap(
+                "Pentru întrebări sau nelămuriri, nu ezitați să contactați instalatorul.",
+                notePaint, innerW
+            )
+            val boxT = 64f
+            val boxH = pad + infoLines.size * 13f + 5f + noteLines.size * 11f + pad
+            fillPaint.color = ACCENT_LIGHT
+            c.drawRect(boxL, boxT, tableR, boxT + boxH, fillPaint)
+            c.drawRect(boxL, boxT, tableR, boxT + boxH,
+                Paint().apply { color = ACCENT; strokeWidth = 1.2f; style = Paint.Style.STROKE })
+            var by = boxT + pad + 9f
+            infoLines.forEach { (line, p) -> c.drawText(line, boxL + pad, by, p); by += 13f }
+            by += 5f
+            noteLines.forEach { line -> c.drawText(line, boxL + pad, by, notePaint); by += 11f }
+            boxBottom = boxT + boxH
+            titleWidth = boxL - MARGIN - 14f
+        }
+
+        y = 78f
+        wrap(work.name, titlePaint, titleWidth).forEach { line ->
+            c.drawText(line, MARGIN, y, titlePaint); y += 21f
+        }
+        val clientLine = buildList {
+            add("Data: ${df.format(Date())}")
+            if (work.client.isNotBlank()) add("Client: ${work.client}")
+            if (work.address.isNotBlank()) add("Adresă: ${work.address}")
+            if (quote.days > 0) add("Durată estimată: ${quote.days} zile")
+        }.joinToString("    •    ")
+        wrap(clientLine, subPaint, titleWidth).forEach { line ->
+            c.drawText(line, MARGIN, y + 2f, subPaint); y += 13f
+        }
+        y += 5f
+        y = maxOf(y, boxBottom + 10f)
+
+        fun tableHeader() {
+            fillPaint.color = ACCENT
+            c.drawRect(tableL, y, tableR, y + HEADER_H, fillPaint)
+            c.drawText("Denumire", tableL + 8f, y + 15f, thPaint)
+            c.drawText("Cant.", colQtyL + 10f, y + 15f, thPaint)
+            c.drawText("P.U. lei", colPUL + 10f, y + 15f, thPaint)
+            c.drawText("Valoare lei", colValL + 8f, y + 15f, thPaint)
+            y += HEADER_H
+        }
+
+        fun row(name: String, qtyText: String, pu: String, value: String, alt: Boolean) {
+            val lines = wrap(name, itemPaint, nameWidth)
+            val rowH = maxOf(ROW_H, lines.size * 13f + 8f)
+            if (alt) {
+                fillPaint.color = ROW_ALT
+                c.drawRect(tableL, y, tableR, y + rowH, fillPaint)
+            }
+            c.drawRect(tableL, y, tableR, y + rowH, gridPaint)
+            c.drawLine(colQtyL, y, colQtyL, y + rowH, gridPaint)
+            c.drawLine(colPUL, y, colPUL, y + rowH, gridPaint)
+            c.drawLine(colValL, y, colValL, y + rowH, gridPaint)
+            lines.forEachIndexed { li, line ->
+                c.drawText(line, tableL + 7f, y + 14f + li * 13f, itemPaint)
+            }
+            c.drawText(qtyText, colQtyL + colQty / 2f, y + 14f, centerText)
+            c.drawText(pu, colPUL + colPU / 2f, y + 14f, centerText)
+            c.drawText(value, colValL + colVal / 2f, y + 14f, centerBold)
+            y += rowH
+        }
+
+        fun sectionRow(title: String) {
+            fillPaint.color = ACCENT_LIGHT
+            c.drawRect(tableL, y, tableR, y + ROW_H, fillPaint)
+            c.drawRect(tableL, y, tableR, y + ROW_H, gridPaint)
+            c.drawText(title, tableL + 7f, y + 14f, catPaint)
+            y += ROW_H
+        }
+
+        tableHeader()
+        if (quote.lines.isNotEmpty()) {
+            sectionRow("MANOPERĂ")
+            quote.lines.forEachIndexed { i, l ->
+                row(l.name, "${l.qty}", money(l.unitPrice), money(l.value), i % 2 == 1)
+            }
+        }
+        val hasExtras = quote.helperCost > 0 || quote.travel > 0 ||
+            quote.food > 0 || quote.consumables > 0
+        if (detailExpenses && hasExtras) {
+            val extras = buildList {
+                if (quote.helperCost > 0) add(
+                    Triple("Ajutor electrician (${quote.days} zile)", quote.days, quote.helperPerDay)
+                )
+                if (quote.travel > 0) add(Triple("Deplasare", 1, quote.travel))
+                if (quote.food > 0) add(Triple("Mâncare", 1, quote.food))
+                if (quote.consumables > 0) add(Triple("Consumabile", 1, quote.consumables))
+            }
+            sectionRow("CHELTUIELI")
+            extras.forEachIndexed { i, (name, qty, pu) ->
+                row(name, "$qty", money(pu), money(qty * pu), i % 2 == 1)
+            }
+        }
+        y += 6f
+        fillPaint.color = ACCENT
+        c.drawRect(tableL, y, tableR, y + ROW_H, fillPaint)
+        c.drawText("TOTAL OFERTĂ:  ${money(quote.total)} lei", tableL + 7f, y + 14f, thPaint)
+        y += ROW_H + 12f
+        if (!detailExpenses && hasExtras) {
+            c.drawText(
+                "Prețul include deplasarea, hrana zilnică, consumabilele și ajutorul de electrician.",
+                tableL, y + 4f, notePaint
+            )
+            y += 12f
+        }
+        c.drawText(
+            "Oferta acoperă manopera; materialele se facturează separat.",
+            tableL, y + 4f, notePaint
+        )
+        c.drawText("Pagina 1 / 1   •   NecMat   •   ${df.format(Date())}",
+            PAGE_W / 2f, PAGE_H - 30f, footerPaint)
+        doc.finishPage(page)
+
+        val fileName = pdfFileName(work, prefix = "Ofertă manoperă")
+        val dir = File(context.cacheDir, "pdfs").apply { mkdirs() }
+        val file = File(dir, fileName)
+        file.outputStream().use { doc.writeTo(it) }
+        doc.close()
+
+        var savedToDownloads = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/NecMat")
+                }
+                val uri = context.contentResolver
+                    .insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        file.inputStream().use { it.copyTo(out) }
+                    }
+                    savedToDownloads = true
+                }
+            } catch (e: Exception) {
+                // ignorăm
+            }
+        }
+        val shareUri = FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", file
+        )
+        return Result(shareUri, savedToDownloads, fileName)
+    }
 }

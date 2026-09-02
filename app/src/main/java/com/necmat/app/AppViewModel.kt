@@ -20,7 +20,8 @@ data class AppSettings(
     val includeBoxesInPdf: Boolean = false,
     val autoAccessories: Boolean = true,
     val clearAfterSave: Boolean = true,
-    val autoUpdateCheck: Boolean = true
+    val autoUpdateCheck: Boolean = true,
+    val detailExpensesInOffer: Boolean = false
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -32,6 +33,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var brands by mutableStateOf(Repo.loadBrands(app))
+        private set
+
+    var labor by mutableStateOf(Repo.loadLabor(app))
         private set
 
     var themeMode by mutableStateOf(loadTheme())
@@ -78,6 +82,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 Repo.saveWorks(getApplication(), works)
             }
             prefs().edit().putBoolean("migr_v6", true).apply()
+        }
+        // migrare v7: priză dublă (2 module) + despărțire CAT5 / CAT6
+        if (!prefs().getBoolean("migr_v7", false)) {
+            categories = Repo.migrateV7(categories) { newId() }
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+            }
+            prefs().edit().putBoolean("migr_v7", true).apply()
+        }
+        // migrare v8: corpurile de iluminat (montaj)
+        if (!prefs().getBoolean("migr_v8", false)) {
+            categories = Repo.migrateV8(categories) { newId() }
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+            }
+            prefs().edit().putBoolean("migr_v8", true).apply()
+        }
+        // migrare v9: dozele de legături pe trepte de circuite
+        if (!prefs().getBoolean("migr_v9", false)) {
+            categories = Repo.migrateV9(categories) { newId() }
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+            }
+            prefs().edit().putBoolean("migr_v9", true).apply()
         }
     }
 
@@ -389,6 +417,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
+    // ---- manoperă ----
+
+    fun saveLabor(cfg: LaborConfig) {
+        labor = cfg
+        viewModelScope.launch(Dispatchers.IO) {
+            Repo.saveLabor(getApplication(), cfg)
+        }
+    }
+
+    /** Dozele + corpurile de iluminat din catalog (pentru prețurile de manoperă). */
+    fun laborItems(): List<String> =
+        categories.flatMap { c ->
+            c.materials.map { it.name }.filter { n ->
+                isMontajCategory(c.name) || (isDozaItem(n) && !isTablouCarcasa(n))
+            }
+        }.distinctBy { it.trim().lowercase() }
+
     // ---- backup / restaurare ----
 
     fun backupJson(): String = Repo.backupJson(categories, works, brands)
@@ -474,7 +519,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             includeBoxesInPdf = p.getBoolean("pdf_boxes", false),
             autoAccessories = p.getBoolean("auto_acc", true),
             clearAfterSave = p.getBoolean("clear_after_save", true),
-            autoUpdateCheck = p.getBoolean("auto_update", true)
+            autoUpdateCheck = p.getBoolean("auto_update", true),
+            detailExpensesInOffer = p.getBoolean("offer_detail", false)
         )
     }
 
@@ -488,6 +534,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("auto_acc", s.autoAccessories)
             .putBoolean("clear_after_save", s.clearAfterSave)
             .putBoolean("auto_update", s.autoUpdateCheck)
+            .putBoolean("offer_detail", s.detailExpensesInOffer)
             .apply()
     }
 

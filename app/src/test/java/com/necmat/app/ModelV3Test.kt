@@ -81,10 +81,11 @@ class ModelV3Test {
 
         val mod = result.first { it.name == "Module" }
         assertTrue(mod.materials.any { it.name == "Modul TV" })
-        assertTrue(mod.materials.any { it.name == "Modul rețea (CAT5/6)" })
+        assertTrue(mod.materials.any { it.name == "Modul rețea CAT5" })
+        assertTrue(mod.materials.any { it.name == "Modul rețea CAT6" })
 
         val buried = result.first { it.name == "Aparataj încastrat" }
-        assertEquals(6, buried.materials.size)
+        assertEquals(7, buried.materials.size)
         assertTrue(buried.materials.any { it.name == "Întrerupător dublu încastrat" })
     }
 
@@ -103,7 +104,7 @@ class ModelV3Test {
         val buried = result.first { it.name == "Aparataj încastrat" }
         assertEquals(1, buried.materials.count { it.name == "Priză simplă încastrată" })
         assertEquals(2, buried.materials.first { it.name == "Priză simplă încastrată" }.qty)
-        assertEquals(6, buried.materials.size)
+        assertEquals(7, buried.materials.size)
     }
 
     @Test

@@ -149,6 +149,36 @@ private fun exportPdfAndShare(context: Context, vm: AppViewModel, work: Work) {
     }
 }
 
+/** Generează PDF-ul ofertei de manoperă și deschide partajarea. */
+private fun exportLaborPdfAndShare(
+    context: Context,
+    vm: AppViewModel,
+    work: Work,
+    quote: LaborQuote
+) {
+    try {
+        val s = vm.settings
+        val result = PdfExporter.exportLaborQuote(
+            context, work, quote, s.installerName, s.installerPhone, s.installerCompany,
+            detailExpenses = s.detailExpensesInOffer
+        )
+        Toast.makeText(
+            context,
+            if (result.savedToDownloads) "PDF salvat în Descărcări/NecMat: ${result.fileName}"
+            else "PDF generat: ${result.fileName}",
+            Toast.LENGTH_LONG
+        ).show()
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, result.shareUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Trimite oferta"))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Eroare la generarea ofertei", Toast.LENGTH_LONG).show()
+    }
+}
+
 /** Scrie backup-ul ca fișier JSON și deschide partajarea. */
 private fun exportBackupAndShare(context: Context, json: String) {
     try {
@@ -748,6 +778,8 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     var showSave by remember { mutableStateOf(false) }
     var showPdfName by remember { mutableStateOf(false) }
+    var showLaborName by remember { mutableStateOf(false) }
+    var laborWork by remember { mutableStateOf<Work?>(null) }
     val selected = vm.categories
         .map { c -> c to c.materials.filter { it.qty > 0 } }
         .filter { it.second.isNotEmpty() }
@@ -882,6 +914,10 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                         modifier = Modifier.weight(1f)
                     ) { Text("Salvează lucrarea") }
                 }
+                OutlinedButton(
+                    onClick = { showLaborName = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Ofertă manoperă (PDF)") }
             }
         }
     }
@@ -913,6 +949,18 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
             exportPdfAndShare(context, vm, vm.snapshot(name, client, address, phone))
         }
     )
+    if (showLaborName) WorkDetailsDialog(
+        title = "Ofertă manoperă — detalii",
+        confirmLabel = "Continuă",
+        onDismiss = { showLaborName = false },
+        onConfirm = { name, client, address, phone, _ ->
+            showLaborName = false
+            laborWork = vm.snapshot(name, client, address, phone)
+        }
+    )
+    laborWork?.let { work ->
+        LaborQuoteDialog(vm, work, onDismiss = { laborWork = null })
+    }
 }
 
 @Composable
@@ -1062,6 +1110,7 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
     val expanded = remember { mutableStateMapOf<Long, Boolean>() }
     var deleteWork by remember { mutableStateOf<Work?>(null) }
     var loadWork by remember { mutableStateOf<Work?>(null) }
+    var laborQuoteFor by remember { mutableStateOf<Work?>(null) }
     val df = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
     // șabloanele sunt afișate primele
     val sortedWorks = vm.works.sortedByDescending { it.isTemplate }
@@ -1163,6 +1212,7 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
                         horizontalArrangement = Arrangement.End
                     ) {
                         TextButton(onClick = { exportPdfAndShare(context, vm, work) }) { Text("PDF") }
+                        TextButton(onClick = { laborQuoteFor = work }) { Text("Ofertă") }
                         TextButton(onClick = { vm.toggleTemplate(work.id) }) {
                             Text(if (work.isTemplate) "Șablon ✓" else "Șablon")
                         }
@@ -1199,6 +1249,9 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
                 onDeleted("Lucrarea „${work.name}” a fost ștearsă")
             }
         )
+    }
+    laborQuoteFor?.let { work ->
+        LaborQuoteDialog(vm, work, onDismiss = { laborQuoteFor = null })
     }
     loadWork?.let { work ->
         ConfirmDialog(
@@ -1357,6 +1410,8 @@ private fun SettingsScreen(
     val s = vm.settings
     var showReorder by remember { mutableStateOf(false) }
     var showBrands by remember { mutableStateOf(false) }
+    var showDozaLabor by remember { mutableStateOf(false) }
+    var showMaterialPrices by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -1416,6 +1471,67 @@ private fun SettingsScreen(
             checked = s.autoUpdateCheck,
             onChange = { vm.saveSettings(s.copy(autoUpdateCheck = it)) }
         )
+
+        SettingsHeader("Manoperă")
+        OutlinedButton(
+            onClick = { showDozaLabor = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Manoperă doze + corpuri iluminat (${vm.labor.dozaPrices.count { it.value > 0 }} setate)")
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = { showMaterialPrices = true },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Prețuri materiale") }
+        Spacer(Modifier.height(4.dp))
+        SwitchRow(
+            title = "Detaliază cheltuielile în oferta PDF",
+            subtitle = "Dezactivat: deplasarea, hrana, consumabilele și ajutorul sunt incluse " +
+                "în totalul ofertei, fără linii separate",
+            checked = s.detailExpensesInOffer,
+            onChange = { vm.saveSettings(s.copy(detailExpensesInOffer = it)) }
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Echipare tablou — preț per etaj, după câte module încap:",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(13, 18, 24).forEach { size ->
+                PriceField(
+                    "$size mod.", vm.labor.rowPrices[size] ?: 0.0,
+                    Modifier.weight(1f)
+                ) { p ->
+                    vm.saveLabor(vm.labor.copy(rowPrices = vm.labor.rowPrices + (size to p)))
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Cheltuieli implicite pentru ofertă:",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PriceField("Deplasare", vm.labor.travel, Modifier.weight(1f)) {
+                vm.saveLabor(vm.labor.copy(travel = it))
+            }
+            PriceField("Mâncare", vm.labor.food, Modifier.weight(1f)) {
+                vm.saveLabor(vm.labor.copy(food = it))
+            }
+            PriceField("Consumab.", vm.labor.consumables, Modifier.weight(1f)) {
+                vm.saveLabor(vm.labor.copy(consumables = it))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        PriceField(
+            "Ajutor electrician (lei/zi)", vm.labor.helperPerDay,
+            Modifier.fillMaxWidth()
+        ) { vm.saveLabor(vm.labor.copy(helperPerDay = it)) }
 
         SettingsHeader("Temă")
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1495,6 +1611,258 @@ private fun SettingsScreen(
 
     if (showReorder) ReorderCategoriesDialog(vm, onDismiss = { showReorder = false })
     if (showBrands) BrandTableDialog(vm, onDismiss = { showBrands = false })
+    if (showDozaLabor) DozaLaborDialog(vm, onDismiss = { showDozaLabor = false })
+    if (showMaterialPrices) MaterialPricesDialog(vm, onDismiss = { showMaterialPrices = false })
+}
+
+/** Prețurile de achiziție ale materialelor, editabile centralizat. */
+@Composable
+private fun MaterialPricesDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    var filter by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Prețuri materiale") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = filter,
+                    onValueChange = { filter = it },
+                    label = { Text("Caută material") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(6.dp))
+                Column(
+                    Modifier
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    vm.categories.forEach { cat ->
+                        val mats = cat.materials.filter {
+                            filter.isBlank() ||
+                                it.name.contains(filter.trim(), ignoreCase = true)
+                        }
+                        if (mats.isEmpty()) return@forEach
+                        Text(
+                            cat.name,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+                        )
+                        mats.forEach { mat ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    mat.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                PriceField(
+                                    "lei", mat.price,
+                                    Modifier.widthIn(min = 96.dp, max = 96.dp)
+                                ) { p -> vm.updateMaterial(cat.id, mat.id, mat.name, p) }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Gata") } }
+    )
+}
+
+/** Câmp de preț (lei) cu tastatură zecimală. */
+@Composable
+private fun PriceField(
+    label: String,
+    value: Double,
+    modifier: Modifier = Modifier,
+    onChange: (Double) -> Unit
+) {
+    var text by remember {
+        mutableStateOf(if (value > 0) String.format(Locale.US, "%.2f", value) else "")
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { v ->
+            text = v.replace(',', '.').filter { it.isDigit() || it == '.' }.take(9)
+            onChange(text.toDoubleOrNull() ?: 0.0)
+        },
+        label = { Text(label) },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = modifier
+    )
+}
+
+/** Oferta de manoperă: liniile calculate + cele 3 cheltuieli editabile. */
+@Composable
+private fun LaborQuoteDialog(vm: AppViewModel, work: Work, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val cfg = vm.labor
+    var travel by remember { mutableStateOf(cfg.travel) }
+    var food by remember { mutableStateOf(cfg.food) }
+    var consumables by remember { mutableStateOf(cfg.consumables) }
+    var daysText by remember { mutableStateOf("") }
+    var helperPerDay by remember { mutableStateOf(cfg.helperPerDay) }
+    val days = daysText.toIntOrNull() ?: 0
+    val baseQuote = remember(work, cfg) { laborQuote(work, cfg) }
+    val quote = baseQuote.copy(
+        travel = travel, food = food, consumables = consumables,
+        days = days, helperPerDay = helperPerDay
+    )
+    fun lei(v: Double) = String.format(Locale.US, "%.2f", v)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ofertă manoperă — ${work.name}") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                if (quote.lines.isEmpty()) {
+                    Text(
+                        "Nicio linie de manoperă calculată. Setează prețurile per doză " +
+                            "și per etaj de tablou în Setări → Manoperă, apoi revino.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else {
+                    quote.lines.forEach { l ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Text(
+                                "${l.name} — ${l.qty} × ${lei(l.unitPrice)} lei",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                lei(l.value),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    Text(
+                        "Manoperă: ${lei(quote.laborTotal)} lei",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PriceField("Deplasare", travel, Modifier.weight(1f)) { travel = it }
+                    PriceField("Mâncare", food, Modifier.weight(1f)) { food = it }
+                    PriceField("Consumabile", consumables, Modifier.weight(1f)) { consumables = it }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = daysText,
+                        onValueChange = { v -> daysText = v.filter { it.isDigit() }.take(3) },
+                        label = { Text("Zile estimate") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    PriceField("Ajutor lei/zi", helperPerDay, Modifier.weight(1f)) {
+                        helperPerDay = it
+                    }
+                }
+                if (quote.helperCost > 0) Text(
+                    "Ajutor electrician: $days zile × ${lei(helperPerDay)} = ${lei(quote.helperCost)} lei",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "TOTAL OFERTĂ: ${lei(quote.total)} lei",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = quote.total > 0,
+                onClick = {
+                    // cheltuielile devin noile valori implicite
+                    vm.saveLabor(
+                        cfg.copy(
+                            travel = travel, food = food,
+                            consumables = consumables, helperPerDay = helperPerDay
+                        )
+                    )
+                    exportLaborPdfAndShare(context, vm, work, quote)
+                    onDismiss()
+                }
+            ) { Text("Generează PDF") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Anulează") } }
+    )
+}
+
+/** Prețurile de manoperă per doză. */
+@Composable
+private fun DozaLaborDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    val cfg = vm.labor
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Manoperă per doză") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "Prețul de montaj pentru fiecare tip de doză (lei/buc).",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                vm.laborItems().forEach { name ->
+                    val key = name.trim().lowercase()
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        PriceField(
+                            "lei", cfg.dozaPrices[key] ?: 0.0,
+                            Modifier.widthIn(min = 96.dp, max = 96.dp)
+                        ) { p ->
+                            vm.saveLabor(
+                                vm.labor.copy(dozaPrices = vm.labor.dozaPrices + (key to p))
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Gata") } }
+    )
 }
 
 @Composable

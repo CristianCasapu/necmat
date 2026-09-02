@@ -141,13 +141,99 @@ fun accessorySummary(categories: List<Category>): AccessorySummary? {
     var used = 0
     categories.forEach { c ->
         if (c.name.trim().equals("module", ignoreCase = true)) {
-            c.materials.forEach { m ->
-                val width = if (m.name.contains("dubl", ignoreCase = true)) 2 else 1
-                used += width * m.qty
-            }
+            c.materials.forEach { m -> used += moduleWidth(m.name) * m.qty }
         }
     }
     return AccessorySummary(boxes, slots, used, (slots - used).coerceAtLeast(0))
+}
+
+/**
+ * Câte module ocupă un aparat modular: numărul din nume (ex: "(2 module)"),
+ * altfel "dublă" = 2, altfel 1. Priza dublă modulară ocupă 2 module,
+ * dar are un singur ștecher.
+ */
+fun moduleWidth(name: String): Int {
+    val m = Regex("(\\d+)\\s*modul", RegexOption.IGNORE_CASE).find(name)
+    if (m != null) return (m.groupValues[1].toIntOrNull() ?: 1).coerceAtLeast(1)
+    return if (name.contains("dubl", ignoreCase = true)) 2 else 1
+}
+
+// ---- manoperă ----
+
+/** Prețurile de manoperă configurate în Setări. */
+data class LaborConfig(
+    val dozaPrices: Map<String, Double> = emptyMap(),  // cheie: numele dozei/corpului (lowercase)
+    val rowPrices: Map<Int, Double> = emptyMap(),      // cheie: mărimea etajului (13/18/24)
+    val travel: Double = 0.0,        // deplasare
+    val food: Double = 0.0,          // mâncare
+    val consumables: Double = 0.0,   // consumabile
+    val helperPerDay: Double = 250.0 // ajutor electrician (lei/zi)
+)
+
+data class LaborLine(val name: String, val qty: Int, val unitPrice: Double) {
+    val value get() = qty * unitPrice
+}
+
+data class LaborQuote(
+    val lines: List<LaborLine>,
+    val travel: Double,
+    val food: Double,
+    val consumables: Double,
+    val days: Int = 0,            // durata estimată a lucrării
+    val helperPerDay: Double = 0.0
+) {
+    val laborTotal get() = lines.sumOf { it.value }
+    val helperCost get() = days * helperPerDay
+    val total get() = laborTotal + travel + food + consumables + helperCost
+}
+
+/** Categorie de montaj (ex. corpuri de iluminat) — intră doar în ofertă, nu în PDF-ul de materiale. */
+fun isMontajCategory(name: String): Boolean =
+    name.contains("(montaj)", ignoreCase = true) || name.contains("iluminat", ignoreCase = true)
+
+/** Din carcasa tabloului: (număr etaje, mărimea etajului în module) sau null. */
+fun tablouRows(name: String): Pair<Int, Int>? {
+    if (!isTablouCarcasa(name)) return null
+    val rows = Regex("(\\d+)\\s*r[âa]nd", RegexOption.IGNORE_CASE)
+        .find(name)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+    if (rows <= 0) return null
+    val modules = Regex("(\\d+)\\s*module", RegexOption.IGNORE_CASE)
+        .find(name)?.groupValues?.get(1)?.toIntOrNull() ?: (rows * 13)
+    val size = Math.round(modules.toDouble() / rows).toInt()
+    return rows to size
+}
+
+/**
+ * Calculează oferta de manoperă dintr-o lucrare:
+ *  - montajul fiecărei doze (după prețul per doză din Setări);
+ *  - echiparea fiecărui etaj de tablou (preț după mărimea etajului);
+ *  - plus deplasare, mâncare și consumabile.
+ */
+fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
+    val lines = mutableListOf<LaborLine>()
+    work.categories.forEach { c ->
+        val montaj = isMontajCategory(c.name)
+        c.materials.forEach { m ->
+            if (m.qty <= 0) return@forEach
+            if (isTablouCarcasa(m.name)) {
+                tablouRows(m.name)?.let { (rows, size) ->
+                    val price = cfg.rowPrices[size]
+                        ?: cfg.rowPrices.minByOrNull { kotlin.math.abs(it.key - size) }?.value
+                        ?: 0.0
+                    if (price > 0) lines += LaborLine(
+                        "Echipare tablou — etaj de $size module", rows * m.qty, price
+                    )
+                }
+            } else if (isDozaItem(m.name) || montaj) {
+                val price = cfg.dozaPrices[m.name.trim().lowercase()] ?: 0.0
+                if (price > 0) lines += LaborLine("Montaj ${m.name}", m.qty, price)
+            }
+        }
+    }
+    return LaborQuote(
+        lines, cfg.travel, cfg.food, cfg.consumables,
+        days = 0, helperPerDay = cfg.helperPerDay
+    )
 }
 
 /** Componentă trifazică după nume (3P, 4P, "trifazic"). */
@@ -157,9 +243,9 @@ fun isTriphasicItem(name: String): Boolean {
 }
 
 /** Numele fișierului PDF: titlu + client + adresă + data creării lucrării. */
-fun pdfFileName(work: Work): String {
+fun pdfFileName(work: Work, prefix: String = ""): String {
     val df = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
-    val parts = listOf(work.name, work.client, work.address, df.format(Date(work.date)))
+    val parts = listOf(prefix, work.name, work.client, work.address, df.format(Date(work.date)))
         .filter { it.isNotBlank() }
     val raw = parts.joinToString(" - ")
         .replace(Regex("[^\\p{L}\\p{N} _.,()+-]"), "")
@@ -187,9 +273,12 @@ fun isTablouCarcasa(name: String): Boolean =
  * busbar-uri etc.), clemele și accesoriile calculate rămân în PDF.
  */
 fun Work.filterForPdf(includeBoxes: Boolean): Work {
-    if (includeBoxes) return this
-    return copy(
-        categories = categories
+    val withoutMontaj = copy(
+        categories = categories.filterNot { isMontajCategory(it.name) }
+    )
+    if (includeBoxes) return withoutMontaj
+    return withoutMontaj.copy(
+        categories = withoutMontaj.categories
             .map { c ->
                 c.copy(materials = c.materials.filterNot {
                     isDozaItem(it.name) || isTablouCarcasa(it.name)
@@ -221,7 +310,7 @@ fun migrateV3(cats: List<Category>, newId: () -> Long): List<Category> {
     var result = cats
 
     // module noi în categoria "Module"
-    val newModules = listOf("Modul TV", "Modul rețea (CAT5/6)")
+    val newModules = listOf("Modul TV", "Modul rețea CAT5", "Modul rețea CAT6")
     val modIdx = result.indexOfFirst { it.name.trim().equals("module", ignoreCase = true) }
     if (modIdx >= 0) {
         var mod = result[modIdx]
@@ -237,7 +326,8 @@ fun migrateV3(cats: List<Category>, newId: () -> Long): List<Category> {
     val buriedItems = listOf(
         "Priză simplă încastrată", "Priză dublă încastrată",
         "Întrerupător simplu încastrat", "Întrerupător dublu încastrat",
-        "Priză rețea (CAT5/6) încastrată", "Priză TV încastrată"
+        "Priză rețea CAT5 încastrată", "Priză rețea CAT6 încastrată",
+        "Priză TV încastrată"
     )
     val burIdx = result.indexOfFirst {
         it.name.trim().equals("aparataj încastrat", ignoreCase = true)
@@ -281,8 +371,7 @@ fun Work.withAutoAccessories(): Work {
     categories.forEach { c ->
         if (c.name.trim().equals("module", ignoreCase = true)) {
             c.materials.forEach { m ->
-                val width = if (m.name.contains("dubl", ignoreCase = true)) 2 else 1
-                usedModules += width * m.qty
+                usedModules += moduleWidth(m.name) * m.qty
             }
         }
     }
@@ -516,6 +605,70 @@ object Repo {
         return existing + missing
     }
 
+    // ---- manoperă (persistență) ----
+
+    private const val LABOR_FILE = "necmat_labor.json"
+
+    /** Prețurile implicite de manoperă (piața RO, setate de utilizator). */
+    fun defaultLaborConfig(): LaborConfig = LaborConfig(
+        dozaPrices = mapOf(
+            // doze mici (2-3 module), doze aparat și doze de legături: 30 lei
+            "doză 2 module" to 30.0, "doză 3 module" to 30.0,
+            "doză aparat pentru priză" to 30.0, "doză aparat pentru întrerupător" to 30.0,
+            "doză simplă" to 30.0, "doză dublă" to 30.0, "doză încastrată" to 30.0,
+            // doze mari (4 module și peste): 50 lei
+            "doză 4 module" to 50.0, "doză 5 module" to 50.0, "doză 7 module" to 50.0,
+            // doze de legături pe trepte de circuite
+            "doză legături mică (până la 5 circuite)" to 50.0,
+            "doză legături medie (până la 15 circuite)" to 100.0,
+            "doză legături mare (până la 20 circuite)" to 150.0,
+            // corpuri de iluminat
+            "bec sau aplică rotundă" to 30.0,
+            "lustră mică / aplică pătrată-dreptunghiulară" to 50.0,
+            "aplică pe perete" to 30.0,
+            "lustră medie" to 100.0,
+            "lustră mare" to 150.0
+        ),
+        rowPrices = mapOf(13 to 300.0, 18 to 300.0, 24 to 300.0),
+        helperPerDay = 250.0
+    )
+
+    fun loadLabor(context: Context): LaborConfig {
+        val f = File(context.filesDir, LABOR_FILE)
+        if (!f.exists()) return defaultLaborConfig()
+        return try {
+            val o = JSONObject(f.readText())
+            val doza = o.optJSONObject("doza") ?: JSONObject()
+            val rows = o.optJSONObject("rows") ?: JSONObject()
+            LaborConfig(
+                dozaPrices = doza.keys().asSequence()
+                    .associateWith { doza.getDouble(it) },
+                rowPrices = rows.keys().asSequence()
+                    .mapNotNull { k -> k.toIntOrNull()?.let { it to rows.getDouble(k) } }
+                    .toMap(),
+                travel = o.optDouble("travel", 0.0),
+                food = o.optDouble("food", 0.0),
+                consumables = o.optDouble("consumables", 0.0),
+                helperPerDay = o.optDouble("helperPerDay", 250.0)
+            )
+        } catch (e: Exception) {
+            defaultLaborConfig()
+        }
+    }
+
+    fun saveLabor(context: Context, cfg: LaborConfig) {
+        val doza = JSONObject()
+        cfg.dozaPrices.forEach { (k, v) -> if (v > 0) doza.put(k, v) }
+        val rows = JSONObject()
+        cfg.rowPrices.forEach { (k, v) -> if (v > 0) rows.put(k.toString(), v) }
+        File(context.filesDir, LABOR_FILE).writeText(
+            JSONObject().put("doza", doza).put("rows", rows)
+                .put("travel", cfg.travel).put("food", cfg.food)
+                .put("consumables", cfg.consumables)
+                .put("helperPerDay", cfg.helperPerDay).toString()
+        )
+    }
+
     // ---- backup / restaurare ----
 
     fun backupJson(
@@ -573,7 +726,17 @@ object Repo {
         "Aparataj aplicat",
         "Tablou electric",
         "Doze legături",
-        "Cabluri și tuburi (m)"
+        "Cabluri și tuburi (m)",
+        "Corpuri de iluminat (montaj)"
+    )
+
+    /** Corpurile de iluminat — doar montaj, intră în oferta de manoperă. */
+    private val lightingItems = listOf(
+        "Bec sau aplică rotundă",
+        "Lustră mică / aplică pătrată-dreptunghiulară",
+        "Aplică pe perete",
+        "Lustră medie",
+        "Lustră mare"
     )
 
     private val tablouExtras = listOf(
@@ -607,6 +770,13 @@ object Repo {
         "Clemă distribuție simplă (4 intrări)", "Clemă distribuție dublă (8 intrări)"
     )
 
+    /** Doze de legături pe trepte de circuite (pentru manoperă). */
+    private val legaturiTiers = listOf(
+        "Doză legături mică (până la 5 circuite)",
+        "Doză legături medie (până la 15 circuite)",
+        "Doză legături mare (până la 20 circuite)"
+    )
+
     fun defaultCatalog(): List<Category> {
         nextId = 1L
         return listOf(
@@ -618,7 +788,8 @@ object Repo {
                 "Aparataj încastrat",
                 "Priză simplă încastrată", "Priză dublă încastrată",
                 "Întrerupător simplu încastrat", "Întrerupător dublu încastrat",
-                "Priză rețea (CAT5/6) încastrată", "Priză TV încastrată"
+                "Priză rețea CAT5 încastrată", "Priză rețea CAT6 încastrată",
+                "Priză TV încastrată"
             ),
             cat(
                 "Doze modulare",
@@ -628,7 +799,8 @@ object Repo {
             cat(
                 "Module",
                 "Întrerupător simplu", "Cap scară", "Cap cruce",
-                "Priză simplă", "Priză dublă", "Modul TV", "Modul rețea (CAT5/6)"
+                "Priză simplă", "Priză dublă (2 module)",
+                "Modul TV", "Modul rețea CAT5", "Modul rețea CAT6"
             ),
             cat(
                 "Aparataj aplicat",
@@ -646,13 +818,48 @@ object Repo {
             cat(
                 "Doze legături",
                 *(listOf("Doză simplă", "Doză dublă", "Doză încastrată") +
-                    dozeLegaturiExtras).toTypedArray()
+                    legaturiTiers + dozeLegaturiExtras).toTypedArray()
             ),
             cat(
                 "Cabluri și tuburi (m)",
                 "Cablu CYY-F 3x1.5", "Cablu CYY-F 3x2.5", "Tub copex Ø16", "Tub copex Ø20"
-            )
+            ),
+            cat("Corpuri de iluminat (montaj)", *lightingItems.toTypedArray())
         )
+    }
+
+    /** Migrare v9: dozele de legături pe trepte de circuite. */
+    fun migrateV9(cats: List<Category>, newId: () -> Long): List<Category> =
+        cats.map { c ->
+            if (!c.name.trim().equals("doze legături", ignoreCase = true)) c
+            else {
+                var out = c
+                legaturiTiers.forEach { name ->
+                    if (out.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                        out = out.copy(materials = out.materials + Material(newId(), name))
+                    }
+                }
+                out
+            }
+        }
+
+    /** Migrare v8: categoria de corpuri de iluminat pentru instalările existente. */
+    fun migrateV8(cats: List<Category>, newId: () -> Long): List<Category> {
+        val idx = cats.indexOfFirst { isMontajCategory(it.name) }
+        return if (idx >= 0) {
+            var c = cats[idx]
+            lightingItems.forEach { name ->
+                if (c.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                    c = c.copy(materials = c.materials + Material(newId(), name))
+                }
+            }
+            cats.mapIndexed { i, cc -> if (i == idx) c else cc }
+        } else {
+            cats + Category(
+                newId(), "Corpuri de iluminat (montaj)",
+                lightingItems.map { Material(newId(), it) }
+            )
+        }
     }
 
     /** Ordonează categoriile după ordinea canonică; cele necunoscute rămân la coadă. */
@@ -680,6 +887,46 @@ object Repo {
             }
         }
         return sortCanonical(augmented)
+    }
+
+    /**
+     * Migrare v7: priza dublă modulară primește numele explicit "(2 module)",
+     * iar modulele/prizele de rețea CAT5/6 se despart în CAT5 și CAT6
+     * (cantitatea existentă rămâne pe CAT6; CAT5 se adaugă cu 0).
+     */
+    fun migrateV7(cats: List<Category>, newId: () -> Long): List<Category> = cats.map { c ->
+        when (c.name.trim().lowercase()) {
+            "module" -> {
+                var mats = c.materials.map { m ->
+                    when {
+                        m.name.equals("Priză dublă", ignoreCase = true) ->
+                            m.copy(name = "Priză dublă (2 module)")
+                        m.name.equals("Modul rețea (CAT5/6)", ignoreCase = true) ->
+                            m.copy(name = "Modul rețea CAT6")
+                        else -> m
+                    }
+                }
+                if (mats.any { it.name.equals("Modul rețea CAT6", ignoreCase = true) } &&
+                    mats.none { it.name.equals("Modul rețea CAT5", ignoreCase = true) }
+                ) {
+                    mats = mats + Material(newId(), "Modul rețea CAT5")
+                }
+                c.copy(materials = mats)
+            }
+            "aparataj încastrat" -> {
+                var mats = c.materials.map { m ->
+                    if (m.name.equals("Priză rețea (CAT5/6) încastrată", ignoreCase = true))
+                        m.copy(name = "Priză rețea CAT6 încastrată") else m
+                }
+                if (mats.any { it.name.equals("Priză rețea CAT6 încastrată", ignoreCase = true) } &&
+                    mats.none { it.name.equals("Priză rețea CAT5 încastrată", ignoreCase = true) }
+                ) {
+                    mats = mats + Material(newId(), "Priză rețea CAT5 încastrată")
+                }
+                c.copy(materials = mats)
+            }
+            else -> c
+        }
     }
 
     /** Migrare v5: componentele de tablou din v1.7. */
