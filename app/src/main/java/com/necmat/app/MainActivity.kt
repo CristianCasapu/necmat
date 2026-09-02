@@ -1870,6 +1870,24 @@ private fun LaborQuoteDialog(vm: AppViewModel, work: Work, onDismiss: () -> Unit
                     .heightIn(max = 440.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                // componente de tablou selectate, dar fără carcasă -> etajele nu pot fi calculate
+                val hasTablouParts = work.categories.any { c ->
+                    c.name.contains("tablou", ignoreCase = true) &&
+                        c.materials.any { it.qty > 0 && !isTablouCarcasa(it.name) }
+                }
+                val hasCarcasa = work.categories.any { c ->
+                    c.materials.any { it.qty > 0 && isTablouCarcasa(it.name) }
+                }
+                if (hasTablouParts && !hasCarcasa) {
+                    Text(
+                        "⚠ Ai componente de tablou, dar nicio carcasă selectată. " +
+                            "Bifează „Tablou 1/2/3 rânduri…” în Materiale ca etajele " +
+                            "să intre în ofertă.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                }
                 if (quote.lines.isEmpty()) {
                     Text(
                         "Nicio linie de manoperă calculată. Setează prețurile per doză " +

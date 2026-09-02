@@ -633,6 +633,19 @@ object Repo {
         helperPerDay = 250.0
     )
 
+    /**
+     * Completează prețurile absente cu valorile implicite (cele setate de
+     * utilizator au prioritate). Repară configurările salvate înainte să
+     * existe prețurile pentru tablou, doze de legături sau corpuri de iluminat.
+     */
+    fun mergeLaborDefaults(cfg: LaborConfig): LaborConfig {
+        val d = defaultLaborConfig()
+        return cfg.copy(
+            dozaPrices = d.dozaPrices + cfg.dozaPrices,
+            rowPrices = d.rowPrices + cfg.rowPrices
+        )
+    }
+
     fun loadLabor(context: Context): LaborConfig {
         val f = File(context.filesDir, LABOR_FILE)
         if (!f.exists()) return defaultLaborConfig()
@@ -640,7 +653,7 @@ object Repo {
             val o = JSONObject(f.readText())
             val doza = o.optJSONObject("doza") ?: JSONObject()
             val rows = o.optJSONObject("rows") ?: JSONObject()
-            LaborConfig(
+            mergeLaborDefaults(LaborConfig(
                 dozaPrices = doza.keys().asSequence()
                     .associateWith { doza.getDouble(it) },
                 rowPrices = rows.keys().asSequence()
@@ -650,7 +663,7 @@ object Repo {
                 food = o.optDouble("food", 0.0),
                 consumables = o.optDouble("consumables", 0.0),
                 helperPerDay = o.optDouble("helperPerDay", 250.0)
-            )
+            ))
         } catch (e: Exception) {
             defaultLaborConfig()
         }

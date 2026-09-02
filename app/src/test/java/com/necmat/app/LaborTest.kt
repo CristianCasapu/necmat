@@ -167,6 +167,23 @@ class LaborTest {
     }
 
     @Test
+    fun `configurarile vechi primesc preturile noi fara a pierde ce a setat utilizatorul`() {
+        // fișier salvat înainte de prețurile pentru iluminat/legături/tablou,
+        // cu un preț personalizat de utilizator
+        val old = LaborConfig(
+            dozaPrices = mapOf("doză 3 module" to 35.0),
+            rowPrices = emptyMap()
+        )
+        val merged = Repo.mergeLaborDefaults(old)
+        // prețul utilizatorului rămâne
+        assertEquals(35.0, merged.dozaPrices["doză 3 module"]!!, 0.001)
+        // prețurile absente vin din implicite
+        assertEquals(100.0, merged.dozaPrices["lustră medie"]!!, 0.001)
+        assertEquals(100.0, merged.dozaPrices["doză legături medie (până la 15 circuite)"]!!, 0.001)
+        assertEquals(300.0, merged.rowPrices[13]!!, 0.001)
+    }
+
+    @Test
     fun `dozele fara pret nu genereaza linii`() {
         val work = Work(
             1, "Test", 0L,

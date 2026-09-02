@@ -21,7 +21,7 @@ data class AppSettings(
     val autoAccessories: Boolean = true,
     val clearAfterSave: Boolean = true,
     val autoUpdateCheck: Boolean = true,
-    val detailExpensesInOffer: Boolean = false,
+    val detailExpensesInOffer: Boolean = true,
     val materialPrices: Boolean = false
 )
 
@@ -529,7 +529,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             autoAccessories = p.getBoolean("auto_acc", true),
             clearAfterSave = p.getBoolean("clear_after_save", true),
             autoUpdateCheck = p.getBoolean("auto_update", true),
-            detailExpensesInOffer = p.getBoolean("offer_detail", false),
+            detailExpensesInOffer = p.getBoolean("offer_detail", true),
             materialPrices = p.getBoolean("mat_prices", false)
         )
     }
