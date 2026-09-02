@@ -1,0 +1,15 @@
+# fisiere sensibile - NU se publica
+necmat-release.keystore
+keystore.properties
+local.properties
+
+# build
+build/
+app/build/
+.gradle/
+*.apk
+
+# IDE
+.idea/
+*.iml
+.kotlin/
