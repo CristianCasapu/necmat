@@ -31,6 +31,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var works by mutableStateOf(Repo.loadWorks(app))
         private set
 
+    var brands by mutableStateOf(Repo.loadBrands(app))
+        private set
+
     var themeMode by mutableStateOf(loadTheme())
         private set
 
@@ -224,11 +227,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                 }
+                if (wc.brand.isNotBlank() || wc.model.isNotBlank()) {
+                    target = target.copy(brand = wc.brand, model = wc.model)
+                }
                 result = result.mapIndexed { i, c -> if (i == idx) target else c }
             } else {
                 result = result + Category(
                     newId(), wc.name,
-                    wc.materials.map { Material(newId(), it.name, it.qty, it.price) }
+                    wc.materials.map { Material(newId(), it.name, it.qty, it.price) },
+                    brand = wc.brand, model = wc.model
                 )
             }
         }
@@ -247,18 +254,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return sb.toString()
     }
 
+    // ---- mărci și modele ----
+
+    private fun persistBrands() {
+        val snapshot = brands
+        viewModelScope.launch(Dispatchers.IO) {
+            Repo.saveBrands(getApplication(), snapshot)
+        }
+    }
+
+    fun upsertBrand(entry: BrandEntry) {
+        val cleaned = entry.copy(brand = entry.brand.trim(), series = entry.series.trim())
+        brands = brands.filter { it.id != cleaned.id } + cleaned
+        persistBrands()
+    }
+
+    fun deleteBrand(brandId: Long) {
+        brands = brands.filter { it.id != brandId }
+        persistBrands()
+    }
+
+    fun restoreBrandDefaults() {
+        brands = Repo.seedBrands()
+        persistBrands()
+    }
+
+    /** Setează marca și modelul unei categorii. */
+    fun setCategoryBrand(catId: Long, brand: String, model: String) = update { cats ->
+        cats.map { c ->
+            if (c.id != catId) c else c.copy(brand = brand.trim(), model = model.trim())
+        }
+    }
+
     // ---- backup / restaurare ----
 
-    fun backupJson(): String = Repo.backupJson(categories, works)
+    fun backupJson(): String = Repo.backupJson(categories, works, brands)
 
     /** Înlocuiește toate datele cu cele din backup. Întoarce false dacă fișierul e invalid. */
     fun restoreBackup(text: String): Boolean {
         val parsed = Repo.parseBackup(text) ?: return false
-        categories = parsed.first
-        works = parsed.second
+        categories = parsed.categories
+        works = parsed.works
+        if (parsed.brands.isNotEmpty()) brands = parsed.brands
         viewModelScope.launch(Dispatchers.IO) {
-            Repo.save(getApplication(), parsed.first)
-            Repo.saveWorks(getApplication(), parsed.second)
+            Repo.save(getApplication(), parsed.categories)
+            Repo.saveWorks(getApplication(), parsed.works)
+            if (parsed.brands.isNotEmpty()) Repo.saveBrands(getApplication(), parsed.brands)
         }
         return true
     }

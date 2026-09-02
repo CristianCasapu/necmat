@@ -261,7 +261,11 @@ object PdfExporter {
             fillPaint.color = ACCENT_LIGHT
             c.drawRect(tableL, y, tableR, y + ROW_H, fillPaint)
             c.drawRect(tableL, y, tableR, y + ROW_H, gridPaint)
-            c.drawText(cat.name.uppercase(Locale.getDefault()), colNameL + 6f, y + 14f, catPaint)
+            val catLabel = buildString {
+                append(cat.name.uppercase(Locale.getDefault()))
+                if (cat.brandLabel.isNotEmpty()) append("   —   ").append(cat.brandLabel)
+            }
+            c.drawText(catLabel, colNameL + 6f, y + 14f, catPaint)
             y += ROW_H
 
             cat.materials.forEachIndexed { i, m ->

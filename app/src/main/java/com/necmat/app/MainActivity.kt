@@ -50,6 +50,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -378,6 +379,7 @@ private fun MaterialsScreen(vm: AppViewModel) {
     var addToCategory by remember { mutableStateOf<Category?>(null) }
     var editCategory by remember { mutableStateOf<Category?>(null) }
     var deleteCat by remember { mutableStateOf<Category?>(null) }
+    var brandCategory by remember { mutableStateOf<Category?>(null) }
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -396,7 +398,8 @@ private fun MaterialsScreen(vm: AppViewModel) {
                     onRename = { editCategory = cat },
                     onDelete = { deleteCat = cat },
                     onMoveUp = { vm.moveCategory(cat.id, -1) },
-                    onMoveDown = { vm.moveCategory(cat.id, +1) }
+                    onMoveDown = { vm.moveCategory(cat.id, +1) },
+                    onBrand = { brandCategory = cat }
                 )
             }
             if (!isCollapsed) items(cat.materials, key = { "m${it.id}" }) { mat ->
@@ -459,6 +462,17 @@ private fun MaterialsScreen(vm: AppViewModel) {
             onConfirm = { vm.setQty(cat.id, mat.id, it); qtyMaterial = null }
         )
     }
+    brandCategory?.let { cat ->
+        CategoryBrandDialog(
+            cat = cat,
+            brands = vm.brands,
+            onDismiss = { brandCategory = null },
+            onSave = { brand, model ->
+                vm.setCategoryBrand(cat.id, brand, model)
+                brandCategory = null
+            }
+        )
+    }
 }
 
 @Composable
@@ -472,7 +486,8 @@ private fun CategoryHeader(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit
+    onMoveDown: () -> Unit,
+    onBrand: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
     val selected = cat.materials.count { it.qty > 0 }
@@ -495,17 +510,27 @@ private fun CategoryHeader(
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onPrimaryContainer
             )
-            Text(
-                cat.name,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
+            Column(
+                Modifier
                     .weight(1f)
                     .padding(start = 4.dp)
-            )
+            ) {
+                Text(
+                    cat.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (cat.brandLabel.isNotEmpty()) Text(
+                    cat.brandLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             if (selected > 0) Badge(
                 containerColor = MaterialTheme.colorScheme.secondary,
                 contentColor = MaterialTheme.colorScheme.onSecondary
@@ -524,6 +549,8 @@ private fun CategoryHeader(
                     )
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Marcă / model") },
+                        onClick = { menu = false; onBrand() })
                     if (canMoveUp) DropdownMenuItem(text = { Text("⬆ Mută mai sus") },
                         onClick = { menu = false; onMoveUp() })
                     if (canMoveDown) DropdownMenuItem(text = { Text("⬇ Mută mai jos") },
@@ -632,7 +659,8 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                 selected.forEach { (cat, mats) ->
                     item(key = "sc${cat.id}") {
                         Text(
-                            cat.name,
+                            if (cat.brandLabel.isEmpty()) cat.name
+                            else "${cat.name} — ${cat.brandLabel}",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -849,7 +877,8 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit) {
                         Spacer(Modifier.height(6.dp))
                         work.categories.forEach { cat ->
                             Text(
-                                cat.name,
+                                if (cat.brandLabel.isEmpty()) cat.name
+                                else "${cat.name} — ${cat.brandLabel}",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
@@ -1062,6 +1091,7 @@ private fun SettingsScreen(
 ) {
     val s = vm.settings
     var showReorder by remember { mutableStateOf(false) }
+    var showBrands by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -1145,6 +1175,11 @@ private fun SettingsScreen(
 
         SettingsHeader("Listă și date")
         OutlinedButton(
+            onClick = { showBrands = true },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Mărci și modele (${vm.brands.size})") }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
             onClick = { showReorder = true },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -1182,6 +1217,7 @@ private fun SettingsScreen(
     }
 
     if (showReorder) ReorderCategoriesDialog(vm, onDismiss = { showReorder = false })
+    if (showBrands) BrandTableDialog(vm, onDismiss = { showBrands = false })
 }
 
 @Composable
@@ -1308,6 +1344,245 @@ private fun ReorderCategoriesDialog(vm: AppViewModel, onDismiss: () -> Unit) {
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Gata") } }
+    )
+}
+
+@Composable
+private fun CategoryBrandDialog(
+    cat: Category,
+    brands: List<BrandEntry>,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    var brand by remember { mutableStateOf(cat.brand) }
+    var model by remember { mutableStateOf(cat.model) }
+    val group = remember(cat.name) { BrandGroups.infer(cat.name) }
+    val suggestions = remember(brands, group) {
+        brands.filter { group in it.groups }.sortedBy { it.label } +
+            brands.filter { group !in it.groups }.sortedBy { it.label }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Marcă / model — ${cat.name}") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = brand, onValueChange = { brand = it },
+                    label = { Text("Marcă") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = model, onValueChange = { model = it },
+                    label = { Text("Model / serie") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Sugestii (${BrandGroups.label(group)} întâi):",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                )
+                Column(
+                    Modifier
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    suggestions.forEach { entry ->
+                        val matches = group in entry.groups
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { brand = entry.brand; model = entry.series }
+                                .padding(vertical = 7.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                entry.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (matches) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (matches) MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                entry.groups.joinToString(", ") { BrandGroups.label(it) },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                Text(
+                    "Lista completă se editează în Setări → Mărci și modele.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(brand, model) }) { Text("Salvează") }
+        },
+        dismissButton = {
+            Row {
+                if (cat.brandLabel.isNotEmpty()) TextButton(
+                    onClick = { onSave("", "") },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("Fără marcă") }
+                TextButton(onClick = onDismiss) { Text("Anulează") }
+            }
+        }
+    )
+}
+
+@Composable
+private fun BrandTableDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    var editEntry by remember { mutableStateOf<BrandEntry?>(null) }
+    var addNew by remember { mutableStateOf(false) }
+    var confirmSeed by remember { mutableStateOf(false) }
+    val sorted = vm.brands.sortedWith(compareBy({ it.brand.lowercase() }, { it.series.lowercase() }))
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Mărci și modele") },
+        text = {
+            Column {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { addNew = true }, modifier = Modifier.weight(1f)) {
+                        Text("Adaugă")
+                    }
+                    OutlinedButton(onClick = { confirmSeed = true }, modifier = Modifier.weight(1f)) {
+                        Text("Lista implicită")
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                    items(sorted, key = { it.id }) { entry ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { editEntry = entry }
+                                .padding(vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(entry.label, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    entry.groups.joinToString(", ") { BrandGroups.label(it) },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = { vm.deleteBrand(entry.id) }) {
+                                Icon(
+                                    Icons.Default.Delete, contentDescription = "Șterge",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Gata") } }
+    )
+
+    if (addNew) BrandEditDialog(
+        entry = null,
+        onDismiss = { addNew = false },
+        onSave = { vm.upsertBrand(it); addNew = false }
+    )
+    editEntry?.let { entry ->
+        BrandEditDialog(
+            entry = entry,
+            onDismiss = { editEntry = null },
+            onSave = { vm.upsertBrand(it); editEntry = null }
+        )
+    }
+    if (confirmSeed) ConfirmDialog(
+        title = "Restaurezi lista implicită de mărci?",
+        text = "Mărcile adăugate sau modificate de tine vor fi înlocuite cu lista inițială.",
+        onDismiss = { confirmSeed = false },
+        onConfirm = { vm.restoreBrandDefaults(); confirmSeed = false }
+    )
+}
+
+@Composable
+private fun BrandEditDialog(
+    entry: BrandEntry?,
+    onDismiss: () -> Unit,
+    onSave: (BrandEntry) -> Unit
+) {
+    var brand by remember { mutableStateOf(entry?.brand ?: "") }
+    var series by remember { mutableStateOf(entry?.series ?: "") }
+    var groups by remember { mutableStateOf(entry?.groups?.toSet() ?: emptySet()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (entry == null) "Marcă nouă" else "Editează marca") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = brand, onValueChange = { brand = it },
+                    label = { Text("Marcă (ex: Noark)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = series, onValueChange = { series = it },
+                    label = { Text("Model / serie — opțional (ex: Ex9BN)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Se aplică grupurilor:",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                )
+                BrandGroups.all.forEach { g ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                groups = if (g in groups) groups - g else groups + g
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = g in groups,
+                            onCheckedChange = {
+                                groups = if (g in groups) groups - g else groups + g
+                            }
+                        )
+                        Text(BrandGroups.label(g), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = brand.isNotBlank() && groups.isNotEmpty(),
+                onClick = {
+                    onSave(
+                        BrandEntry(
+                            id = entry?.id ?: (System.currentTimeMillis() + (0..999).random()),
+                            brand = brand,
+                            series = series,
+                            groups = groups.toList()
+                        )
+                    )
+                }
+            ) { Text("Salvează") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Anulează") } }
     )
 }
 

@@ -53,8 +53,8 @@ class UpdaterTest {
         val json = Repo.backupJson(cats, works)
         val parsed = Repo.parseBackup(json)!!
 
-        assertEquals(cats, parsed.first)
-        assertEquals(works, parsed.second)
+        assertEquals(cats, parsed.categories)
+        assertEquals(works, parsed.works)
     }
 
     @Test

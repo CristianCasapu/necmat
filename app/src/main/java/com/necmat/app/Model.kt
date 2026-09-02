@@ -15,8 +15,53 @@ data class Material(
 data class Category(
     val id: Long,
     val name: String,
-    val materials: List<Material> = emptyList()
-)
+    val materials: List<Material> = emptyList(),
+    val brand: String = "",
+    val model: String = ""
+) {
+    /** "Gewiss Chorus" sau "" dacă nu e setată marca. */
+    val brandLabel get() = listOf(brand, model).filter { it.isNotBlank() }.joinToString(" ")
+}
+
+/** O marcă + serie/model, cu grupurile de materiale cărora li se aplică. */
+data class BrandEntry(
+    val id: Long,
+    val brand: String,
+    val series: String = "",
+    val groups: List<String> = emptyList()
+) {
+    val label get() = listOf(brand, series).filter { it.isNotBlank() }.joinToString(" ")
+}
+
+/** Grupurile de aplicabilitate pentru mărci. */
+object BrandGroups {
+    const val MODULAR = "modular"
+    const val APARATAJ = "aparataj"
+    const val TABLOU = "tablou"
+    const val INSTALATIE = "instalatie"
+
+    val all = listOf(MODULAR, APARATAJ, TABLOU, INSTALATIE)
+
+    fun label(group: String): String = when (group) {
+        MODULAR -> "Aparataj modular"
+        APARATAJ -> "Aparataj clasic"
+        TABLOU -> "Tablou electric"
+        INSTALATIE -> "Doze / tuburi / instalație"
+        else -> group
+    }
+
+    /** Deduce grupul unei categorii după nume. */
+    fun infer(categoryName: String): String {
+        val n = categoryName.lowercase()
+        return when {
+            n.contains("tablou") -> TABLOU
+            n.contains("modul") -> MODULAR
+            n.contains("aparat") -> APARATAJ
+            n.contains("doz") || n.contains("cablu") || n.contains("tub") -> INSTALATIE
+            else -> APARATAJ
+        }
+    }
+}
 
 data class Work(
     val id: Long,
@@ -139,9 +184,17 @@ fun Work.withAutoAccessories(): Work {
     val obturatoare = slots - usedModules
     if (obturatoare > 0) acc += Material(accId--, "Obturator (modul fals)", obturatoare)
 
+    // accesoriile moștenesc marca dozelor modulare (același sistem)
+    val boxCat = categories.firstOrNull { c ->
+        c.materials.any { it.qty > 0 && isModularBox(it.name) }
+    }
+
     return copy(
         categories = categories +
-            Category(-999L, "Accesorii doze modulare (calcul automat)", acc)
+            Category(
+                -999L, "Accesorii doze modulare (calcul automat)", acc,
+                brand = boxCat?.brand ?: "", model = boxCat?.model ?: ""
+            )
     )
 }
 
@@ -158,6 +211,7 @@ object Repo {
             )
         }
         return JSONObject().put("id", c.id).put("name", c.name).put("materials", mats)
+            .put("brand", c.brand).put("model", c.model)
     }
 
     private fun catFromJson(c: JSONObject): Category {
@@ -171,7 +225,9 @@ object Repo {
                     m.getLong("id"), m.getString("name"),
                     m.getInt("qty"), m.optDouble("price", 0.0)
                 )
-            }
+            },
+            brand = c.optString("brand", ""),
+            model = c.optString("model", "")
         )
     }
 
@@ -230,29 +286,133 @@ object Repo {
         File(context.filesDir, WORKS_FILE).writeText(arr.toString())
     }
 
+    // ---- mărci și modele ----
+
+    private const val BRANDS_FILE = "necmat_brands.json"
+
+    private fun brandToJson(b: BrandEntry): JSONObject {
+        val groups = JSONArray()
+        b.groups.forEach { groups.put(it) }
+        return JSONObject().put("id", b.id).put("brand", b.brand)
+            .put("series", b.series).put("groups", groups)
+    }
+
+    private fun brandFromJson(o: JSONObject): BrandEntry {
+        val groups = o.optJSONArray("groups") ?: JSONArray()
+        return BrandEntry(
+            id = o.getLong("id"),
+            brand = o.getString("brand"),
+            series = o.optString("series", ""),
+            groups = (0 until groups.length()).map { groups.getString(it) }
+        )
+    }
+
+    fun loadBrands(context: Context): List<BrandEntry> {
+        val f = File(context.filesDir, BRANDS_FILE)
+        if (!f.exists()) return seedBrands()
+        return try {
+            val arr = JSONArray(f.readText())
+            (0 until arr.length()).map { brandFromJson(arr.getJSONObject(it)) }
+        } catch (e: Exception) {
+            seedBrands()
+        }
+    }
+
+    fun saveBrands(context: Context, brands: List<BrandEntry>) {
+        val arr = JSONArray()
+        brands.forEach { arr.put(brandToJson(it)) }
+        File(context.filesDir, BRANDS_FILE).writeText(arr.toString())
+    }
+
+    /** Mărci uzuale pe piața din România, pe grupuri de materiale. */
+    fun seedBrands(): List<BrandEntry> {
+        fun be(id: Long, brand: String, series: String, vararg g: String) =
+            BrandEntry(id, brand, series, g.toList())
+        val m = BrandGroups.MODULAR
+        val a = BrandGroups.APARATAJ
+        val t = BrandGroups.TABLOU
+        val i = BrandGroups.INSTALATIE
+        return listOf(
+            // aparataj modular (doze modulare, module, rame)
+            be(1, "Gewiss", "Chorus", m, a),
+            be(2, "Gewiss", "System", m),
+            be(3, "bTicino", "Living Light", m),
+            be(4, "bTicino", "Matix", m),
+            be(5, "Vimar", "Plana", m),
+            be(6, "Vimar", "Eikon", m),
+            be(7, "Schneider Electric", "Unica System+", m),
+            // aparataj clasic (îngropat / aplicat)
+            be(10, "Schneider Electric", "Asfora", a),
+            be(11, "Schneider Electric", "Sedna Design", a),
+            be(12, "Legrand", "Valena Life", a),
+            be(13, "Legrand", "Niloe", a),
+            be(14, "Viko", "Karre", a),
+            be(15, "Viko", "Meridian", a),
+            be(16, "Panasonic", "Arkedia Slim", a),
+            be(17, "ABB", "Basic55", a),
+            be(18, "Hager", "Lumina", a),
+            be(19, "Makel", "Manolya", a),
+            be(20, "Mono Electric", "Despina", a),
+            be(21, "Schneider Electric", "Mureva Styl", a),
+            be(22, "Legrand", "Plexo", a),
+            // tablou electric
+            be(30, "Schneider Electric", "Easy9", t),
+            be(31, "Schneider Electric", "Acti9", t),
+            be(32, "ABB", "SH200", t),
+            be(33, "Eaton", "PL6", t),
+            be(34, "Hager", "MCN", t),
+            be(35, "Legrand", "RX3", t),
+            be(36, "Legrand", "TX3", t),
+            be(37, "ETI", "ETIMAT 10", t),
+            be(38, "Noark", "Ex9BN", t),
+            be(39, "Siemens", "5SL", t),
+            be(40, "Comtec", "", t),
+            be(41, "Elmark", "", t),
+            // doze / tuburi / instalație
+            be(50, "Kopos", "", i),
+            be(51, "Gewiss", "GW", i),
+            be(52, "Elettrocanali", "", i),
+            be(53, "Courbi", "", i)
+        )
+    }
+
     // ---- backup / restaurare ----
 
-    fun backupJson(categories: List<Category>, works: List<Work>): String {
+    fun backupJson(
+        categories: List<Category>,
+        works: List<Work>,
+        brands: List<BrandEntry> = emptyList()
+    ): String {
         val cats = JSONArray()
         categories.forEach { cats.put(catToJson(it)) }
         val ws = JSONArray()
         works.forEach { ws.put(workToJson(it)) }
+        val bs = JSONArray()
+        brands.forEach { bs.put(brandToJson(it)) }
         return JSONObject()
-            .put("app", "NecMat").put("version", 1)
-            .put("categories", cats).put("works", ws)
+            .put("app", "NecMat").put("version", 2)
+            .put("categories", cats).put("works", ws).put("brands", bs)
             .toString(2)
     }
 
-    /** Returnează (categorii, lucrări) sau null dacă fișierul nu e un backup valid. */
-    fun parseBackup(text: String): Pair<List<Category>, List<Work>>? = try {
+    data class Backup(
+        val categories: List<Category>,
+        val works: List<Work>,
+        val brands: List<BrandEntry>
+    )
+
+    /** Returnează datele din backup sau null dacă fișierul nu e valid. */
+    fun parseBackup(text: String): Backup? = try {
         val o = JSONObject(text)
         if (o.optString("app") != "NecMat") null
         else {
             val cats = o.getJSONArray("categories")
             val ws = o.getJSONArray("works")
-            Pair(
-                (0 until cats.length()).map { catFromJson(cats.getJSONObject(it)) },
-                (0 until ws.length()).map { workFromJson(ws.getJSONObject(it)) }
+            val bs = o.optJSONArray("brands") ?: JSONArray()
+            Backup(
+                categories = (0 until cats.length()).map { catFromJson(cats.getJSONObject(it)) },
+                works = (0 until ws.length()).map { workFromJson(ws.getJSONObject(it)) },
+                brands = (0 until bs.length()).map { brandFromJson(bs.getJSONObject(it)) }
             )
         }
     } catch (e: Exception) {
