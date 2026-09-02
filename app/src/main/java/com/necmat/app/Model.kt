@@ -33,20 +33,83 @@ data class Work(
     val hasPrices get() = categories.any { c -> c.materials.any { it.price > 0.0 } }
 }
 
+/** Detectează o doză modulară după nume (ex: "Doză 3 module"). */
+private val MODULE_BOX_REGEX = Regex("(\\d+)\\s*module", RegexOption.IGNORE_CASE)
+fun isModularBox(name: String): Boolean =
+    name.contains("doz", ignoreCase = true) && MODULE_BOX_REGEX.containsMatchIn(name)
+
+/**
+ * Pregătește lucrarea pentru PDF: dacă includeBoxes = false, dozele modulare
+ * sunt eliminate din listă (rămân doar pentru calculele de accesorii).
+ */
+fun Work.filterForPdf(includeBoxes: Boolean): Work {
+    if (includeBoxes) return this
+    return copy(
+        categories = categories
+            .map { c -> c.copy(materials = c.materials.filterNot { isModularBox(it.name) }) }
+            .filter { it.materials.isNotEmpty() }
+    )
+}
+
+/** Adaugă lucrarea în listă; o lucrare existentă cu același nume este înlocuită. */
+fun upsertWork(works: List<Work>, w: Work): List<Work> =
+    listOf(w) + works.filterNot { it.name.trim().equals(w.name.trim(), ignoreCase = true) }
+
+/**
+ * Migrare v3: adaugă materialele noi (module TV/rețea, aparataj îngropat)
+ * la cataloagele existente, fără a dubla ce există deja.
+ */
+fun migrateV3(cats: List<Category>, newId: () -> Long): List<Category> {
+    var result = cats
+
+    // module noi în categoria "Module"
+    val newModules = listOf("Modul TV", "Modul rețea (CAT5/6)")
+    val modIdx = result.indexOfFirst { it.name.trim().equals("module", ignoreCase = true) }
+    if (modIdx >= 0) {
+        var mod = result[modIdx]
+        newModules.forEach { name ->
+            if (mod.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                mod = mod.copy(materials = mod.materials + Material(newId(), name))
+            }
+        }
+        result = result.mapIndexed { i, c -> if (i == modIdx) mod else c }
+    }
+
+    // categoria "Aparataj îngropat"
+    val buriedItems = listOf(
+        "Priză simplă îngropată", "Priză dublă îngropată",
+        "Întrerupător simplu îngropat", "Întrerupător dublu îngropat",
+        "Priză rețea (CAT5/6) îngropată", "Priză TV îngropată"
+    )
+    val burIdx = result.indexOfFirst {
+        it.name.trim().equals("aparataj îngropat", ignoreCase = true)
+    }
+    result = if (burIdx >= 0) {
+        var bur = result[burIdx]
+        buriedItems.forEach { name ->
+            if (bur.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                bur = bur.copy(materials = bur.materials + Material(newId(), name))
+            }
+        }
+        result.mapIndexed { i, c -> if (i == burIdx) bur else c }
+    } else {
+        result + Category(newId(), "Aparataj îngropat", buriedItems.map { Material(newId(), it) })
+    }
+    return result
+}
+
 /**
  * Adaugă automat accesoriile pentru dozele modulare:
  *  - câte o ramă suport + o ramă ornament (mască) pentru fiecare doză modulară, pe mărimea ei;
  *  - obturatoare = sloturile totale din doze − modulele folosite (priza dublă ocupă 2 module).
  */
 fun Work.withAutoAccessories(): Work {
-    val boxRegex = Regex("(\\d+)\\s*module", RegexOption.IGNORE_CASE)
-
     // doze modulare: N module -> număr de doze
     val boxes = sortedMapOf<Int, Int>()
     categories.forEach { c ->
         c.materials.forEach { m ->
-            if (m.qty > 0 && m.name.contains("doz", ignoreCase = true)) {
-                boxRegex.find(m.name)?.let { match ->
+            if (m.qty > 0 && isModularBox(m.name)) {
+                MODULE_BOX_REGEX.find(m.name)?.let { match ->
                     val n = match.groupValues[1].toIntOrNull()
                     if (n != null && n > 0) boxes[n] = (boxes[n] ?: 0) + m.qty
                 }
@@ -224,7 +287,13 @@ object Repo {
             cat(
                 "Module",
                 "Întrerupător simplu", "Cap scară", "Cap cruce",
-                "Priză simplă", "Priză dublă"
+                "Priză simplă", "Priză dublă", "Modul TV", "Modul rețea (CAT5/6)"
+            ),
+            cat(
+                "Aparataj îngropat",
+                "Priză simplă îngropată", "Priză dublă îngropată",
+                "Întrerupător simplu îngropat", "Întrerupător dublu îngropat",
+                "Priză rețea (CAT5/6) îngropată", "Priză TV îngropată"
             ),
             cat(
                 "Tablou electric",

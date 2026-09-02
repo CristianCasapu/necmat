@@ -13,6 +13,16 @@ import kotlinx.coroutines.launch
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
+data class AppSettings(
+    val installerName: String = "",
+    val installerPhone: String = "",
+    val installerCompany: String = "",
+    val includeBoxesInPdf: Boolean = false,
+    val autoAccessories: Boolean = true,
+    val clearAfterSave: Boolean = true,
+    val autoUpdateCheck: Boolean = true
+)
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     var categories by mutableStateOf(Repo.load(app))
@@ -24,7 +34,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var themeMode by mutableStateOf(loadTheme())
         private set
 
+    var settings by mutableStateOf(loadSettings())
+        private set
+
     private var saveJob: Job? = null
+
+    init {
+        // migrare v3: module TV/rețea + aparataj îngropat pentru instalările existente
+        if (!prefs().getBoolean("migr_v3", false)) {
+            categories = migrateV3(categories) { newId() }
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+            }
+            prefs().edit().putBoolean("migr_v3", true).apply()
+        }
+    }
 
     private fun persist() {
         saveJob?.cancel()
@@ -110,6 +134,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Mută o categorie de la un index la altul (drag & drop). */
+    fun moveCategoryTo(from: Int, to: Int) = update { cats ->
+        if (from !in cats.indices || to !in cats.indices || from == to) cats
+        else cats.toMutableList().apply {
+            val c = removeAt(from)
+            add(to, c)
+        }
+    }
+
     fun resetQuantities() = update { cats ->
         cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
     }
@@ -143,11 +176,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         phone = phone.trim()
     )
 
+    /** Salvează lucrarea; una existentă cu același nume este înlocuită. */
     fun saveWork(name: String, client: String, address: String, phone: String): Boolean {
         val w = snapshot(name, client, address, phone)
         if (w.categories.isEmpty()) return false
-        works = listOf(w) + works
+        works = upsertWork(works, w)
         persistWorks()
+        if (settings.clearAfterSave) resetQuantities()
         return true
     }
 
@@ -235,8 +270,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var updateBusy by mutableStateOf(false)
         private set
 
-    /** Verificare silențioasă la pornire. */
+    /** Verificare silențioasă la pornire (dacă e activată din setări). */
     fun autoCheckUpdate() {
+        if (!settings.autoUpdateCheck) return
         viewModelScope.launch { updateInfo = Updater.check() }
     }
 
@@ -274,5 +310,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(mode: ThemeMode) {
         themeMode = mode
         prefs().edit().putString("theme", mode.name).apply()
+    }
+
+    // ---- setări ----
+
+    private fun loadSettings(): AppSettings {
+        val p = prefs()
+        return AppSettings(
+            installerName = p.getString("inst_name", "") ?: "",
+            installerPhone = p.getString("inst_phone", "") ?: "",
+            installerCompany = p.getString("inst_company", "") ?: "",
+            includeBoxesInPdf = p.getBoolean("pdf_boxes", false),
+            autoAccessories = p.getBoolean("auto_acc", true),
+            clearAfterSave = p.getBoolean("clear_after_save", true),
+            autoUpdateCheck = p.getBoolean("auto_update", true)
+        )
+    }
+
+    fun saveSettings(s: AppSettings) {
+        settings = s
+        prefs().edit()
+            .putString("inst_name", s.installerName)
+            .putString("inst_phone", s.installerPhone)
+            .putString("inst_company", s.installerCompany)
+            .putBoolean("pdf_boxes", s.includeBoxesInPdf)
+            .putBoolean("auto_acc", s.autoAccessories)
+            .putBoolean("clear_after_save", s.clearAfterSave)
+            .putBoolean("auto_update", s.autoUpdateCheck)
+            .apply()
+    }
+
+    /** Lucrarea pregătită pentru PDF, conform setărilor. */
+    fun preparePdfWork(work: Work): Work {
+        val withAcc = if (settings.autoAccessories) work.withAutoAccessories() else work
+        return withAcc.filterForPdf(settings.includeBoxesInPdf)
     }
 }

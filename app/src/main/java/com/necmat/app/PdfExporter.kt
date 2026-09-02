@@ -40,7 +40,13 @@ object PdfExporter {
 
     data class Result(val shareUri: Uri, val savedToDownloads: Boolean, val fileName: String)
 
-    fun export(context: Context, work: Work): Result {
+    fun export(
+        context: Context,
+        work: Work,
+        installerName: String = "",
+        installerPhone: String = "",
+        installerCompany: String = ""
+    ): Result {
         val doc = PdfDocument()
 
         val bandPaint = Paint().apply { color = ACCENT }
@@ -162,29 +168,84 @@ object PdfExporter {
         c0.drawRect(0f, 0f, PAGE_W, 54f, fillPaint)
         c0.drawText("NECESAR DE MATERIALE", MARGIN, 34f, bandText)
 
+        // chenar cu datele instalatorului, în dreapta
+        val hasInstaller = installerName.isNotBlank() || installerPhone.isNotBlank() ||
+            installerCompany.isNotBlank()
+        var boxBottom = 60f
+        var titleWidth = tableR - tableL
+        if (hasInstaller) {
+            val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 8.5f; color = TEXT_MUTED
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+            }
+            val boxW = 215f
+            val boxL = tableR - boxW
+            val pad = 9f
+            val innerW = boxW - 2 * pad
+
+            val infoLines = mutableListOf<Pair<String, Paint>>()
+            if (installerCompany.isNotBlank())
+                wrap(installerCompany, itemBold, innerW).forEach { infoLines += it to itemBold }
+            if (installerName.isNotBlank()) {
+                val p = if (installerCompany.isBlank()) itemBold else itemPaint
+                wrap("Instalator: $installerName", p, innerW).forEach { infoLines += it to p }
+            }
+            if (installerPhone.isNotBlank())
+                infoLines += "Telefon: $installerPhone" to itemPaint
+            val noteLines = wrap(
+                "Pentru întrebări sau nelămuriri, nu ezitați să contactați instalatorul.",
+                notePaint, innerW
+            )
+
+            val boxT = 64f
+            val boxH = pad + infoLines.size * 13f + 5f + noteLines.size * 11f + pad
+            fillPaint.color = ACCENT_LIGHT
+            c0.drawRect(boxL, boxT, tableR, boxT + boxH, fillPaint)
+            val borderPaint = Paint().apply {
+                color = ACCENT; strokeWidth = 1.2f; style = Paint.Style.STROKE
+            }
+            c0.drawRect(boxL, boxT, tableR, boxT + boxH, borderPaint)
+
+            var by = boxT + pad + 9f
+            infoLines.forEach { (line, p) ->
+                c0.drawText(line, boxL + pad, by, p)
+                by += 13f
+            }
+            by += 5f
+            noteLines.forEach { line ->
+                c0.drawText(line, boxL + pad, by, notePaint)
+                by += 11f
+            }
+            boxBottom = boxT + boxH
+            titleWidth = boxL - MARGIN - 14f
+        }
+
         y = 78f
-        wrap(work.name, titlePaint, tableR - tableL).forEach { line ->
+        wrap(work.name, titlePaint, titleWidth).forEach { line ->
             c0.drawText(line, MARGIN, y, titlePaint)
             y += 21f
         }
-        c0.drawText(
+        wrap(
             "Data: ${df.format(Date(work.date))}    •    " +
                 "${work.totalTypes} tipuri de materiale    •    ${work.totalPieces} bucăți",
-            MARGIN, y + 2f, subPaint
-        )
-        y += 14f
+            subPaint, titleWidth
+        ).forEach { line ->
+            c0.drawText(line, MARGIN, y + 2f, subPaint)
+            y += 14f
+        }
         val clientLine = buildList {
             if (work.client.isNotBlank()) add("Client: ${work.client}")
             if (work.address.isNotBlank()) add("Adresă: ${work.address}")
             if (work.phone.isNotBlank()) add("Telefon: ${work.phone}")
         }.joinToString("    •    ")
         if (clientLine.isNotEmpty()) {
-            wrap(clientLine, subPaint, tableR - tableL).forEach { line ->
+            wrap(clientLine, subPaint, titleWidth).forEach { line ->
                 c0.drawText(line, MARGIN, y + 2f, subPaint)
                 y += 13f
             }
         }
         y += 4f
+        y = maxOf(y, boxBottom + 10f)
 
         drawTableHeader()
 

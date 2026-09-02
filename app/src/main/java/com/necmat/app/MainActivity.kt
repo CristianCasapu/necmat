@@ -11,6 +11,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,7 +41,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -58,8 +63,10 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -72,8 +79,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -87,6 +98,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,12 +113,16 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { MATERIALS, SUMMARY, WORKS }
+private enum class Screen { MATERIALS, SUMMARY, WORKS, SETTINGS }
 
 /** Generează PDF-ul unei lucrări, anunță salvarea în Descărcări și deschide partajarea. */
-private fun exportPdfAndShare(context: Context, work: Work) {
+private fun exportPdfAndShare(context: Context, vm: AppViewModel, work: Work) {
     try {
-        val result = PdfExporter.export(context, work.withAutoAccessories())
+        val s = vm.settings
+        val result = PdfExporter.export(
+            context, vm.preparePdfWork(work),
+            s.installerName, s.installerPhone, s.installerCompany
+        )
         val msg = if (result.savedToDownloads)
             "PDF salvat în Descărcări/NecMat: ${result.fileName}"
         else "PDF generat: ${result.fileName}"
@@ -221,31 +237,6 @@ fun App(vm: AppViewModel) {
                         DropdownMenuItem(
                             text = { Text("Golește cantitățile") },
                             onClick = { menuOpen = false; confirmReset = true })
-                        DropdownMenuItem(
-                            text = { Text("Restaurează lista implicită") },
-                            onClick = { menuOpen = false; confirmDefaults = true })
-                        DropdownMenuItem(
-                            text = { Text("Exportă datele (backup)") },
-                            onClick = {
-                                menuOpen = false
-                                exportBackupAndShare(context, vm.backupJson())
-                            })
-                        DropdownMenuItem(
-                            text = { Text("Importă date din backup") },
-                            onClick = { menuOpen = false; confirmImport = true })
-                        DropdownMenuItem(
-                            text = { Text("Caută actualizări") },
-                            onClick = {
-                                menuOpen = false
-                                Toast.makeText(context, "Se verifică…", Toast.LENGTH_SHORT).show()
-                                vm.checkUpdateNow { found ->
-                                    if (!found) Toast.makeText(
-                                        context,
-                                        "Ai deja ultima versiune (v${BuildConfig.VERSION_NAME})",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                }
-                            })
                     }
                 }
             )
@@ -278,14 +269,36 @@ fun App(vm: AppViewModel) {
                     },
                     label = { Text("Lucrări") }
                 )
+                NavigationBarItem(
+                    selected = screen == Screen.SETTINGS,
+                    onClick = { screen = Screen.SETTINGS },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    label = { Text("Setări") }
+                )
             }
         }
     ) { pad ->
         Box(Modifier.padding(pad)) {
             when (screen) {
                 Screen.MATERIALS -> MaterialsScreen(vm)
-                Screen.SUMMARY -> SummaryScreen(vm)
+                Screen.SUMMARY -> SummaryScreen(vm, onSaved = { screen = Screen.WORKS })
                 Screen.WORKS -> WorksScreen(vm, onLoaded = { screen = Screen.MATERIALS })
+                Screen.SETTINGS -> SettingsScreen(
+                    vm = vm,
+                    onExport = { exportBackupAndShare(context, vm.backupJson()) },
+                    onImport = { confirmImport = true },
+                    onRestoreDefaults = { confirmDefaults = true },
+                    onCheckUpdates = {
+                        Toast.makeText(context, "Se verifică…", Toast.LENGTH_SHORT).show()
+                        vm.checkUpdateNow { found ->
+                            if (!found) Toast.makeText(
+                                context,
+                                "Ai deja ultima versiune (v${BuildConfig.VERSION_NAME})",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                )
             }
         }
     }
@@ -588,7 +601,7 @@ private fun QtyButton(label: String, enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SummaryScreen(vm: AppViewModel) {
+private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var showSave by remember { mutableStateOf(false) }
@@ -707,6 +720,7 @@ private fun SummaryScreen(vm: AppViewModel) {
             showSave = false
             if (vm.saveWork(name, client, address, phone)) {
                 Toast.makeText(context, "Lucrare salvată: $name", Toast.LENGTH_SHORT).show()
+                onSaved()
             }
         }
     )
@@ -716,7 +730,7 @@ private fun SummaryScreen(vm: AppViewModel) {
         onDismiss = { showPdfName = false },
         onConfirm = { name, client, address, phone ->
             showPdfName = false
-            exportPdfAndShare(context, vm.snapshot(name, client, address, phone))
+            exportPdfAndShare(context, vm, vm.snapshot(name, client, address, phone))
         }
     )
 }
@@ -861,7 +875,7 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit) {
                         Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.End
                     ) {
-                        TextButton(onClick = { exportPdfAndShare(context, work) }) { Text("PDF") }
+                        TextButton(onClick = { exportPdfAndShare(context, vm, work) }) { Text("PDF") }
                         TextButton(onClick = {
                             vm.duplicateWork(work)
                             Toast.makeText(context, "Lucrare duplicată", Toast.LENGTH_SHORT).show()
@@ -1035,6 +1049,265 @@ private fun EditMaterialDialog(
                 TextButton(onClick = onDismiss) { Text("Anulează") }
             }
         }
+    )
+}
+
+@Composable
+private fun SettingsScreen(
+    vm: AppViewModel,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+    onRestoreDefaults: () -> Unit,
+    onCheckUpdates: () -> Unit
+) {
+    val s = vm.settings
+    var showReorder by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        SettingsHeader("Instalator (apare în PDF)")
+        OutlinedTextField(
+            value = s.installerName,
+            onValueChange = { vm.saveSettings(s.copy(installerName = it)) },
+            label = { Text("Nume instalator") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = s.installerPhone,
+            onValueChange = { vm.saveSettings(s.copy(installerPhone = it)) },
+            label = { Text("Telefon") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = s.installerCompany,
+            onValueChange = { vm.saveSettings(s.copy(installerCompany = it)) },
+            label = { Text("Firmă — opțional") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+
+        SettingsHeader("PDF")
+        SwitchRow(
+            title = "Include dozele modulare în PDF",
+            subtitle = "Dezactivat: dozele se folosesc doar la calculul ramelor și obturatoarelor",
+            checked = s.includeBoxesInPdf,
+            onChange = { vm.saveSettings(s.copy(includeBoxesInPdf = it)) }
+        )
+        SwitchRow(
+            title = "Accesorii calculate automat",
+            subtitle = "Rame suport, rame ornament și obturatoare (priza dublă = 2 module)",
+            checked = s.autoAccessories,
+            onChange = { vm.saveSettings(s.copy(autoAccessories = it)) }
+        )
+
+        SettingsHeader("Comportament")
+        SwitchRow(
+            title = "Golește materialele după salvare",
+            subtitle = "După salvarea lucrării, cantitățile revin la 0 și treci la Lucrări",
+            checked = s.clearAfterSave,
+            onChange = { vm.saveSettings(s.copy(clearAfterSave = it)) }
+        )
+        SwitchRow(
+            title = "Caută actualizări la pornire",
+            subtitle = "Verifică automat GitHub la deschiderea aplicației",
+            checked = s.autoUpdateCheck,
+            onChange = { vm.saveSettings(s.copy(autoUpdateCheck = it)) }
+        )
+
+        SettingsHeader("Temă")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            listOf(
+                ThemeMode.SYSTEM to "Sistem",
+                ThemeMode.LIGHT to "Luminoasă",
+                ThemeMode.DARK to "Întunecată"
+            ).forEach { (mode, label) ->
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .clickable { vm.setTheme(mode) },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = vm.themeMode == mode,
+                        onClick = { vm.setTheme(mode) }
+                    )
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+
+        SettingsHeader("Listă și date")
+        OutlinedButton(
+            onClick = { showReorder = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.Menu, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Ordinea categoriilor (drag & drop)")
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onExport, modifier = Modifier.weight(1f)) {
+                Text("Exportă backup")
+            }
+            OutlinedButton(onClick = onImport, modifier = Modifier.weight(1f)) {
+                Text("Importă backup")
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onRestoreDefaults, modifier = Modifier.weight(1f)) {
+                Text("Listă implicită")
+            }
+            OutlinedButton(onClick = onCheckUpdates, modifier = Modifier.weight(1f)) {
+                Text("Caută actualizări")
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "NecMat v${BuildConfig.VERSION_NAME}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+        Spacer(Modifier.height(24.dp))
+    }
+
+    if (showReorder) ReorderCategoriesDialog(vm, onDismiss = { showReorder = false })
+}
+
+@Composable
+private fun SettingsHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 18.dp, bottom = 8.dp)
+    )
+}
+
+@Composable
+private fun SwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onChange(!checked) }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun ReorderCategoriesDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    var dragIndex by remember { mutableStateOf(-1) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    val rowHeightPx = with(LocalDensity.current) { 52.dp.toPx() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ordinea categoriilor") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    "Ține apăsat pe o categorie și trage-o în sus sau în jos.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                vm.categories.forEachIndexed { idx, cat ->
+                    val isDragged = idx == dragIndex
+                    Surface(
+                        color = if (isDragged) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(10.dp),
+                        tonalElevation = if (isDragged) 6.dp else 0.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                            .zIndex(if (isDragged) 1f else 0f)
+                            .graphicsLayer {
+                                translationY = if (isDragged) dragOffset else 0f
+                            }
+                            .pointerInput(cat.id) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        dragIndex = vm.categories.indexOfFirst { it.id == cat.id }
+                                        dragOffset = 0f
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragOffset += amount.y
+                                        val from = dragIndex
+                                        val steps = (dragOffset / rowHeightPx).roundToInt()
+                                        if (steps != 0 && from >= 0) {
+                                            val to = (from + steps)
+                                                .coerceIn(0, vm.categories.lastIndex)
+                                            if (to != from) {
+                                                vm.moveCategoryTo(from, to)
+                                                dragIndex = to
+                                                dragOffset -= (to - from) * rowHeightPx
+                                            }
+                                        }
+                                    },
+                                    onDragEnd = { dragIndex = -1; dragOffset = 0f },
+                                    onDragCancel = { dragIndex = -1; dragOffset = 0f }
+                                )
+                            }
+                    ) {
+                        Row(
+                            Modifier
+                                .heightIn(min = 48.dp)
+                                .padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Menu, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                cat.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(start = 10.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Gata") } }
     )
 }
 
