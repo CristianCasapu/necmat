@@ -43,7 +43,7 @@ class ModelV3Test {
     @Test
     fun `dozele aparat nu sunt filtrate ca doze modulare`() {
         assertFalse(isModularBox("Doză aparat pentru priză"))
-        assertFalse(isModularBox("Priză dublă îngropată"))
+        assertFalse(isModularBox("Priză dublă încastrată"))
         assertTrue(isModularBox("Doză 7 module"))
         assertTrue(isModularBox("doza 2 module"))
     }
@@ -73,7 +73,7 @@ class ModelV3Test {
     // ---- migrateV3 ----
 
     @Test
-    fun `migrarea adauga modulele si aparatajul ingropat`() {
+    fun `migrarea adauga modulele si aparatajul incastrat`() {
         val cats = listOf(
             Category(1, "Module", listOf(Material(10, "Priză simplă", 0)))
         )
@@ -83,16 +83,16 @@ class ModelV3Test {
         assertTrue(mod.materials.any { it.name == "Modul TV" })
         assertTrue(mod.materials.any { it.name == "Modul rețea (CAT5/6)" })
 
-        val buried = result.first { it.name == "Aparataj îngropat" }
+        val buried = result.first { it.name == "Aparataj încastrat" }
         assertEquals(6, buried.materials.size)
-        assertTrue(buried.materials.any { it.name == "Întrerupător dublu îngropat" })
+        assertTrue(buried.materials.any { it.name == "Întrerupător dublu încastrat" })
     }
 
     @Test
     fun `migrarea nu dubleaza ce exista deja si pastreaza cantitatile`() {
         val cats = listOf(
             Category(1, "Module", listOf(Material(10, "Modul TV", qty = 4))),
-            Category(2, "Aparataj îngropat", listOf(Material(20, "Priză simplă îngropată", qty = 2)))
+            Category(2, "Aparataj încastrat", listOf(Material(20, "Priză simplă încastrată", qty = 2)))
         )
         val result = migrateV3(migrateV3(cats) { nextId() }) { nextId() }
 
@@ -100,20 +100,20 @@ class ModelV3Test {
         assertEquals(1, mod.materials.count { it.name == "Modul TV" })
         assertEquals(4, mod.materials.first { it.name == "Modul TV" }.qty)
 
-        val buried = result.first { it.name == "Aparataj îngropat" }
-        assertEquals(1, buried.materials.count { it.name == "Priză simplă îngropată" })
-        assertEquals(2, buried.materials.first { it.name == "Priză simplă îngropată" }.qty)
+        val buried = result.first { it.name == "Aparataj încastrat" }
+        assertEquals(1, buried.materials.count { it.name == "Priză simplă încastrată" })
+        assertEquals(2, buried.materials.first { it.name == "Priză simplă încastrată" }.qty)
         assertEquals(6, buried.materials.size)
     }
 
     @Test
-    fun `aparatajul ingropat nu intra in calculul de module`() {
+    fun `aparatajul incastrat nu intra in calculul de module`() {
         // doar categoria "Module" conteaza la obturatoare
         val w = Work(
             1, "Test", 0L,
             listOf(
                 Category(1, "Doze modulare", listOf(Material(10, "Doză 2 module", 1))),
-                Category(2, "Aparataj îngropat", listOf(Material(20, "Priză dublă îngropată", 5)))
+                Category(2, "Aparataj încastrat", listOf(Material(20, "Priză dublă încastrată", 5)))
             )
         ).withAutoAccessories()
         val acc = w.categories.first { it.name.contains("calcul automat") }

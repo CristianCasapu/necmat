@@ -79,9 +79,9 @@ class AutoAccessoriesTest {
     }
 
     @Test
-    fun `dozele aparat ingropate nu conteaza ca doze modulare`() {
+    fun `dozele aparat incastrate nu conteaza ca doze modulare`() {
         val w = work(
-            Category(1, "Doze aparat îngropate", listOf(
+            Category(1, "Doze aparat încastrate", listOf(
                 Material(10, "Doză aparat pentru priză", 8)
             ))
         ).withAutoAccessories()

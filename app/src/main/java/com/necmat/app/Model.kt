@@ -87,12 +87,67 @@ data class Work(
     val categories: List<Category>,
     val client: String = "",
     val address: String = "",
-    val phone: String = ""
+    val phone: String = "",
+    val isTemplate: Boolean = false
 ) {
     val totalTypes get() = categories.sumOf { it.materials.size }
     val totalPieces get() = categories.sumOf { c -> c.materials.sumOf { it.qty } }
     val totalValue get() = categories.sumOf { c -> c.materials.sumOf { it.qty * it.price } }
     val hasPrices get() = categories.any { c -> c.materials.any { it.price > 0.0 } }
+}
+
+/** Migrare v6: „îngropat" devine „încastrat" în toate denumirile. */
+private fun renameTerm(text: String): String = text
+    .replace("îngropat", "încastrat").replace("Îngropat", "Încastrat")
+
+fun renameTermCategories(cats: List<Category>): List<Category> = cats.map { c ->
+    c.copy(
+        name = renameTerm(c.name),
+        materials = c.materials.map { it.copy(name = renameTerm(it.name)) }
+    )
+}
+
+fun renameTermWorks(works: List<Work>): List<Work> = works.map { w ->
+    w.copy(categories = renameTermCategories(w.categories))
+}
+
+/** Rezumatul calculului de accesorii pentru dozele modulare. */
+data class AccessorySummary(
+    val boxes: Int,          // număr de doze modulare
+    val slots: Int,          // sloturi totale
+    val usedModules: Int,    // module folosite (priza dublă = 2)
+    val obturatoare: Int     // sloturi rămase libere (0 dacă depășite)
+) {
+    val overflow get() = usedModules > slots
+}
+
+/** null dacă nu există doze modulare selectate. */
+fun accessorySummary(categories: List<Category>): AccessorySummary? {
+    var boxes = 0
+    var slots = 0
+    categories.forEach { c ->
+        c.materials.forEach { m ->
+            if (m.qty > 0 && isModularBox(m.name)) {
+                val n = Regex("(\\d+)\\s*module", RegexOption.IGNORE_CASE)
+                    .find(m.name)?.groupValues?.get(1)?.toIntOrNull()
+                if (n != null && n > 0) {
+                    boxes += m.qty
+                    slots += n * m.qty
+                }
+            }
+        }
+    }
+    if (boxes == 0) return null
+    var used = 0
+    categories.forEach { c ->
+        if (c.name.trim().equals("module", ignoreCase = true)) {
+            c.materials.forEach { m ->
+                val width = if (m.name.contains("dubl", ignoreCase = true)) 2 else 1
+                used += width * m.qty
+            }
+        }
+    }
+    return AccessorySummary(boxes, slots, used, (slots - used).coerceAtLeast(0))
 }
 
 /** Componentă trifazică după nume (3P, 4P, "trifazic"). */
@@ -121,18 +176,25 @@ fun isModularBox(name: String): Boolean =
 /** Orice doză (modulară, aparat, legături) — montată deja la instalare. */
 fun isDozaItem(name: String): Boolean = name.contains("doz", ignoreCase = true)
 
+/** Carcasa tabloului (ex: "Tablou 2 rânduri (26 module)") — montată deja. */
+fun isTablouCarcasa(name: String): Boolean =
+    name.trim().lowercase().startsWith("tablou ")
+
 /**
  * Pregătește lucrarea pentru PDF. Cu includeBoxes = false (implicit), dozele
- * de orice fel și tabloul electric NU apar în PDF: sunt deja montate și
- * servesc doar la calcule. Clemele, accesoriile (rame, obturatoare) și
- * restul materialelor de cumpărat rămân.
+ * de orice fel și carcasele de tablou NU apar în PDF: sunt deja montate și
+ * servesc doar la calcule. Componentele tabloului (MCB, diferențiale,
+ * busbar-uri etc.), clemele și accesoriile calculate rămân în PDF.
  */
 fun Work.filterForPdf(includeBoxes: Boolean): Work {
     if (includeBoxes) return this
     return copy(
         categories = categories
-            .filterNot { it.name.contains("tablou", ignoreCase = true) }
-            .map { c -> c.copy(materials = c.materials.filterNot { isDozaItem(it.name) }) }
+            .map { c ->
+                c.copy(materials = c.materials.filterNot {
+                    isDozaItem(it.name) || isTablouCarcasa(it.name)
+                })
+            }
             .filter { it.materials.isNotEmpty() }
     )
 }
@@ -152,7 +214,7 @@ fun replaceWork(works: List<Work>, w: Work, overwriteId: Long?): List<Work> {
 }
 
 /**
- * Migrare v3: adaugă materialele noi (module TV/rețea, aparataj îngropat)
+ * Migrare v3: adaugă materialele noi (module TV/rețea, aparataj încastrat)
  * la cataloagele existente, fără a dubla ce există deja.
  */
 fun migrateV3(cats: List<Category>, newId: () -> Long): List<Category> {
@@ -171,14 +233,14 @@ fun migrateV3(cats: List<Category>, newId: () -> Long): List<Category> {
         result = result.mapIndexed { i, c -> if (i == modIdx) mod else c }
     }
 
-    // categoria "Aparataj îngropat"
+    // categoria "Aparataj încastrat"
     val buriedItems = listOf(
-        "Priză simplă îngropată", "Priză dublă îngropată",
-        "Întrerupător simplu îngropat", "Întrerupător dublu îngropat",
-        "Priză rețea (CAT5/6) îngropată", "Priză TV îngropată"
+        "Priză simplă încastrată", "Priză dublă încastrată",
+        "Întrerupător simplu încastrat", "Întrerupător dublu încastrat",
+        "Priză rețea (CAT5/6) încastrată", "Priză TV încastrată"
     )
     val burIdx = result.indexOfFirst {
-        it.name.trim().equals("aparataj îngropat", ignoreCase = true)
+        it.name.trim().equals("aparataj încastrat", ignoreCase = true)
     }
     result = if (burIdx >= 0) {
         var bur = result[burIdx]
@@ -189,7 +251,7 @@ fun migrateV3(cats: List<Category>, newId: () -> Long): List<Category> {
         }
         result.mapIndexed { i, c -> if (i == burIdx) bur else c }
     } else {
-        result + Category(newId(), "Aparataj îngropat", buriedItems.map { Material(newId(), it) })
+        result + Category(newId(), "Aparataj încastrat", buriedItems.map { Material(newId(), it) })
     }
     return result
 }
@@ -289,6 +351,7 @@ object Repo {
         return JSONObject().put("id", w.id).put("name", w.name)
             .put("date", w.date).put("categories", cats)
             .put("client", w.client).put("address", w.address).put("phone", w.phone)
+            .put("template", w.isTemplate)
     }
 
     private fun workFromJson(w: JSONObject): Work {
@@ -300,7 +363,8 @@ object Repo {
             categories = (0 until cats.length()).map { j -> catFromJson(cats.getJSONObject(j)) },
             client = w.optString("client", ""),
             address = w.optString("address", ""),
-            phone = w.optString("phone", "")
+            phone = w.optString("phone", ""),
+            isTemplate = w.optBoolean("template", false)
         )
     }
 
@@ -393,7 +457,7 @@ object Repo {
             be(5, "Vimar", "Plana", m),
             be(6, "Vimar", "Eikon", m),
             be(7, "Schneider Electric", "Unica System+", m),
-            // aparataj clasic (îngropat / aplicat)
+            // aparataj clasic (încastrat / aplicat)
             be(10, "Schneider Electric", "Asfora", a),
             be(11, "Schneider Electric", "Sedna Design", a),
             be(12, "Legrand", "Valena Life", a),
@@ -502,8 +566,8 @@ object Repo {
 
     /** Ordinea canonică de afișare a categoriilor. */
     val canonicalOrder = listOf(
-        "Doze aparat îngropate",
-        "Aparataj îngropat",
+        "Doze aparat încastrate",
+        "Aparataj încastrat",
         "Doze modulare",
         "Module",
         "Aparataj aplicat",
@@ -547,14 +611,14 @@ object Repo {
         nextId = 1L
         return listOf(
             cat(
-                "Doze aparat îngropate",
+                "Doze aparat încastrate",
                 "Doză aparat pentru priză", "Doză aparat pentru întrerupător"
             ),
             cat(
-                "Aparataj îngropat",
-                "Priză simplă îngropată", "Priză dublă îngropată",
-                "Întrerupător simplu îngropat", "Întrerupător dublu îngropat",
-                "Priză rețea (CAT5/6) îngropată", "Priză TV îngropată"
+                "Aparataj încastrat",
+                "Priză simplă încastrată", "Priză dublă încastrată",
+                "Întrerupător simplu încastrat", "Întrerupător dublu încastrat",
+                "Priză rețea (CAT5/6) încastrată", "Priză TV încastrată"
             ),
             cat(
                 "Doze modulare",
@@ -581,7 +645,7 @@ object Repo {
             ),
             cat(
                 "Doze legături",
-                *(listOf("Doză simplă", "Doză dublă", "Doză îngropată") +
+                *(listOf("Doză simplă", "Doză dublă", "Doză încastrată") +
                     dozeLegaturiExtras).toTypedArray()
             ),
             cat(

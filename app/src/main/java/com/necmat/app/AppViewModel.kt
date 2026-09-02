@@ -43,7 +43,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var saveJob: Job? = null
 
     init {
-        // migrare v3: module TV/rețea + aparataj îngropat pentru instalările existente
+        // migrare v3: module TV/rețea + aparataj încastrat pentru instalările existente
         if (!prefs().getBoolean("migr_v3", false)) {
             categories = migrateV3(categories) { newId() }
             viewModelScope.launch(Dispatchers.IO) {
@@ -69,6 +69,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             prefs().edit().putBoolean("migr_v5", true).apply()
         }
+        // migrare v6: „îngropat" devine „încastrat" peste tot
+        if (!prefs().getBoolean("migr_v6", false)) {
+            categories = renameTermCategories(categories)
+            works = renameTermWorks(works)
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+                Repo.saveWorks(getApplication(), works)
+            }
+            prefs().edit().putBoolean("migr_v6", true).apply()
+        }
+    }
+
+    // ---- anulare (undo) pentru ștergeri ----
+
+    private var undoState: Pair<List<Category>, List<Work>>? = null
+
+    private fun rememberUndo() {
+        undoState = categories to works
+    }
+
+    /** Restaurează starea dinaintea ultimei ștergeri. */
+    fun undoDelete(): Boolean {
+        val s = undoState ?: return false
+        categories = s.first
+        works = s.second
+        undoState = null
+        persist()
+        persistWorks()
+        return true
     }
 
     private fun persist() {
@@ -118,9 +147,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deleteMaterial(catId: Long, matId: Long) = update { cats ->
-        cats.map { c ->
-            if (c.id != catId) c else c.copy(materials = c.materials.filter { it.id != matId })
+    fun deleteMaterial(catId: Long, matId: Long) {
+        rememberUndo()
+        update { cats ->
+            cats.map { c ->
+                if (c.id != catId) c else c.copy(materials = c.materials.filter { it.id != matId })
+            }
         }
     }
 
@@ -132,8 +164,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         cats.map { c -> if (c.id != catId) c else c.copy(name = name.trim()) }
     }
 
-    fun deleteCategory(catId: Long) = update { cats ->
-        cats.filter { it.id != catId }
+    fun deleteCategory(catId: Long) {
+        rememberUndo()
+        update { cats -> cats.filter { it.id != catId } }
     }
 
     /** Scoate din lucrare toate materialele unei categorii (cantități la 0). */
@@ -260,7 +293,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteWork(workId: Long) {
+        rememberUndo()
         works = works.filter { it.id != workId }
+        persistWorks()
+    }
+
+    /** Marchează / demarchează o lucrare ca șablon. */
+    fun toggleTemplate(workId: Long) {
+        works = works.map { w ->
+            if (w.id != workId) w else w.copy(isTemplate = !w.isTemplate)
+        }
         persistWorks()
     }
 

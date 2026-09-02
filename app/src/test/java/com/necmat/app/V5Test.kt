@@ -20,7 +20,7 @@ class V5Test {
         val cats = listOf(
             Category(1, "Cabluri și tuburi (m)"),
             Category(2, "Tablou electric", listOf(Material(10, "Diferențial general", 1))),
-            Category(3, "Doze aparat îngropate"),
+            Category(3, "Doze aparat încastrate"),
             Category(4, "Categorie proprie"),
             Category(5, "Doze legături")
         )
@@ -29,7 +29,7 @@ class V5Test {
         // ordine canonică; categoria necunoscută la coadă
         assertEquals(
             listOf(
-                "Doze aparat îngropate", "Tablou electric", "Doze legături",
+                "Doze aparat încastrate", "Tablou electric", "Doze legături",
                 "Cabluri și tuburi (m)", "Categorie proprie"
             ),
             result.map { it.name }

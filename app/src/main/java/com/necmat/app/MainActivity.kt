@@ -68,6 +68,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -76,6 +80,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -176,6 +181,20 @@ fun App(vm: AppViewModel) {
     var confirmDefaults by remember { mutableStateOf(false) }
     var confirmImport by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    // ștergere cu opțiune de anulare (Undo)
+    val onDeleted: (String) -> Unit = { msg ->
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = "Anulează",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) vm.undoDelete()
+        }
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -202,6 +221,7 @@ fun App(vm: AppViewModel) {
     val totalTypes = vm.categories.sumOf { c -> c.materials.count { it.qty > 0 } }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -292,9 +312,13 @@ fun App(vm: AppViewModel) {
     ) { pad ->
         Box(Modifier.padding(pad)) {
             when (screen) {
-                Screen.MATERIALS -> MaterialsScreen(vm)
+                Screen.MATERIALS -> MaterialsScreen(vm, onDeleted = onDeleted)
                 Screen.SUMMARY -> SummaryScreen(vm, onSaved = { screen = Screen.WORKS })
-                Screen.WORKS -> WorksScreen(vm, onLoaded = { screen = Screen.MATERIALS })
+                Screen.WORKS -> WorksScreen(
+                    vm,
+                    onLoaded = { screen = Screen.MATERIALS },
+                    onDeleted = onDeleted
+                )
                 Screen.SETTINGS -> SettingsScreen(
                     vm = vm,
                     onExport = { exportBackupAndShare(context, vm.backupJson()) },
@@ -386,7 +410,7 @@ fun App(vm: AppViewModel) {
 }
 
 @Composable
-private fun MaterialsScreen(vm: AppViewModel) {
+private fun MaterialsScreen(vm: AppViewModel, onDeleted: (String) -> Unit) {
     var query by remember { mutableStateOf("") }
     var onlySelected by remember { mutableStateOf(false) }
     var editMaterial by remember { mutableStateOf<Pair<Category, Material>?>(null) }
@@ -494,7 +518,11 @@ private fun MaterialsScreen(vm: AppViewModel) {
             deleteLabel = "Șterge definitiv categoria și cele ${cat.materials.size} materiale",
             onDismiss = { deleteCat = null },
             onRemoveFromWork = { vm.zeroCategory(cat.id); deleteCat = null },
-            onDeleteForever = { vm.deleteCategory(cat.id); deleteCat = null }
+            onDeleteForever = {
+                vm.deleteCategory(cat.id)
+                deleteCat = null
+                onDeleted("Categoria „${cat.name}” a fost ștearsă")
+            }
         )
     }
     editMaterial?.let { (cat, mat) ->
@@ -505,7 +533,11 @@ private fun MaterialsScreen(vm: AppViewModel) {
                 vm.updateMaterial(cat.id, mat.id, name, price); editMaterial = null
             },
             onRemoveFromWork = { vm.setQty(cat.id, mat.id, 0); editMaterial = null },
-            onDelete = { vm.deleteMaterial(cat.id, mat.id); editMaterial = null }
+            onDelete = {
+                vm.deleteMaterial(cat.id, mat.id)
+                editMaterial = null
+                onDeleted("Materialul „${mat.name}” a fost șters")
+            }
         )
     }
     qtyMaterial?.let { (cat, mat) ->
@@ -739,6 +771,37 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                 Modifier.weight(1f),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
             ) {
+                // sumar live al calculului de accesorii pentru dozele modulare
+                item(key = "accsum") {
+                    accessorySummary(vm.categories)?.let { s ->
+                        Surface(
+                            color = if (s.overflow)
+                                MaterialTheme.colorScheme.errorContainer
+                            else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 6.dp)
+                        ) {
+                            Text(
+                                if (s.overflow)
+                                    "⚠ Modulele folosite (${s.usedModules}) depășesc sloturile " +
+                                        "din dozele modulare (${s.slots}). Verifică dozele!"
+                                else buildString {
+                                    append("Accesorii calculate pentru PDF: ")
+                                    append("${s.boxes} rame suport + ${s.boxes} rame ornament")
+                                    if (s.obturatoare > 0) append(" + ${s.obturatoare} obturatoare")
+                                    append("  (${s.slots} sloturi · ${s.usedModules} module)")
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (s.overflow)
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                else MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
                 selected.forEach { (cat, mats) ->
                     item(key = "sc${cat.id}") {
                         Text(
@@ -860,7 +923,12 @@ private fun WorkDetailsDialog(
     onDismiss: () -> Unit,
     onConfirm: (String, String, String, String, Long?) -> Unit
 ) {
-    var name by remember { mutableStateOf("Necesar materiale ") }
+    var name by remember {
+        mutableStateOf(
+            "Necesar materiale " +
+                SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
+        )
+    }
     var client by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
@@ -989,12 +1057,14 @@ private fun WorkDetailsDialog(
 }
 
 @Composable
-private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit) {
+private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (String) -> Unit) {
     val context = LocalContext.current
     val expanded = remember { mutableStateMapOf<Long, Boolean>() }
     var deleteWork by remember { mutableStateOf<Work?>(null) }
     var loadWork by remember { mutableStateOf<Work?>(null) }
     val df = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
+    // șabloanele sunt afișate primele
+    val sortedWorks = vm.works.sortedByDescending { it.isTemplate }
 
     if (vm.works.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1012,7 +1082,7 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit) {
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
     ) {
-        items(vm.works, key = { "w${it.id}" }) { work ->
+        items(sortedWorks, key = { "w${it.id}" }) { work ->
             val isOpen = expanded[work.id] == true
             Surface(
                 color = MaterialTheme.colorScheme.surface,
@@ -1027,11 +1097,23 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit) {
                         .clickable { expanded[work.id] = !isOpen }
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    Text(
-                        work.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            work.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (work.isTemplate) {
+                            Spacer(Modifier.width(8.dp))
+                            Badge(
+                                containerColor = MaterialTheme.colorScheme.secondary,
+                                contentColor = MaterialTheme.colorScheme.onSecondary
+                            ) { Text("ȘABLON") }
+                        }
+                    }
                     Text(
                         buildString {
                             append("${df.format(Date(work.date))}  ·  ${work.totalTypes} tipuri  ·  ${work.totalPieces} buc")
@@ -1081,6 +1163,9 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit) {
                         horizontalArrangement = Arrangement.End
                     ) {
                         TextButton(onClick = { exportPdfAndShare(context, vm, work) }) { Text("PDF") }
+                        TextButton(onClick = { vm.toggleTemplate(work.id) }) {
+                            Text(if (work.isTemplate) "Șablon ✓" else "Șablon")
+                        }
                         TextButton(onClick = {
                             vm.duplicateWork(work)
                             Toast.makeText(context, "Lucrare duplicată", Toast.LENGTH_SHORT).show()
@@ -1108,7 +1193,11 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit) {
             title = "Ștergi lucrarea?",
             text = "„${work.name}” va fi ștearsă definitiv.",
             onDismiss = { deleteWork = null },
-            onConfirm = { vm.deleteWork(work.id); deleteWork = null }
+            onConfirm = {
+                vm.deleteWork(work.id)
+                deleteWork = null
+                onDeleted("Lucrarea „${work.name}” a fost ștearsă")
+            }
         )
     }
     loadWork?.let { work ->
@@ -1301,9 +1390,9 @@ private fun SettingsScreen(
 
         SettingsHeader("PDF")
         SwitchRow(
-            title = "Include dozele și tabloul în PDF",
-            subtitle = "Dezactivat: dozele și tabloul sunt deja montate — rămân informative " +
-                "și servesc doar calculelor; nu apar în PDF",
+            title = "Include dozele și carcasele de tablou în PDF",
+            subtitle = "Dezactivat: dozele și carcasa tabloului sunt deja montate și nu apar " +
+                "în PDF; componentele tabloului (MCB, diferențiale, busbar-uri) apar mereu",
             checked = s.includeBoxesInPdf,
             onChange = { vm.saveSettings(s.copy(includeBoxesInPdf = it)) }
         )
