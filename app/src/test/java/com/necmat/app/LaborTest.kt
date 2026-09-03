@@ -43,10 +43,10 @@ class LaborTest {
         )
         val q = laborQuote(work, cfg)
 
-        // 4 × 25 + 6 × 15 + 2 etaje × 100
+        // 4 × 25 + 6 × 15 + 2 etaje × 100 — comasate pe grupuri
         assertEquals(3, q.lines.size)
-        assertEquals(100.0, q.lines.first { it.name == "Montaj Doză 3 module" }.value, 0.001)
-        assertEquals(90.0, q.lines.first { it.name == "Montaj Doză aparat pentru priză" }.value, 0.001)
+        assertEquals(100.0, q.lines.first { it.name == "Montaj aparataj modular" }.value, 0.001)
+        assertEquals(90.0, q.lines.first { it.name == "Montaj aparataj" }.value, 0.001)
         val tablou = q.lines.first { it.name.startsWith("Echipare tablou") }
         assertEquals(2, tablou.qty)
         assertEquals(200.0, tablou.value, 0.001)
@@ -164,6 +164,34 @@ class LaborTest {
             twice.first { isMontajCategory(it.name) }.materials.size
         )
         assertEquals(5, twice.first { isMontajCategory(it.name) }.materials.size)
+    }
+
+    @Test
+    fun `liniile se comaseaza pe grupuri cu pret unitar doar cand e uniform`() {
+        val cfg = Repo.defaultLaborConfig()
+        val work = Work(
+            1, "Test", 0L,
+            listOf(
+                Category(1, "Doze modulare", listOf(
+                    Material(10, "Doză 2 module", 3),   // 30 lei
+                    Material(11, "Doză 5 module", 1)    // 50 lei -> prețuri mixte
+                )),
+                Category(2, "Doze legături", listOf(
+                    Material(20, "Doză legături mică (până la 5 circuite)", 2)  // 50 lei uniform
+                ))
+            )
+        )
+        val q = laborQuote(work, cfg)
+
+        val modular = q.lines.first { it.name == "Montaj aparataj modular" }
+        assertEquals(4, modular.qty)
+        assertEquals(140.0, modular.value, 0.001)   // 3×30 + 1×50
+        assertEquals(0.0, modular.unitPrice, 0.001) // mixt -> "-" în PDF
+
+        val legaturi = q.lines.first { it.name == "Montaj doze legături" }
+        assertEquals(2, legaturi.qty)
+        assertEquals(50.0, legaturi.unitPrice, 0.001) // uniform -> P.U. afișat
+        assertEquals(100.0, legaturi.value, 0.001)
     }
 
     @Test

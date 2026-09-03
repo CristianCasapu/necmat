@@ -170,9 +170,12 @@ data class LaborConfig(
     val helperPerDay: Double = 250.0 // ajutor electrician (lei/zi)
 )
 
-data class LaborLine(val name: String, val qty: Int, val unitPrice: Double) {
-    val value get() = qty * unitPrice
-}
+data class LaborLine(
+    val name: String,
+    val qty: Int,
+    val unitPrice: Double,          // 0.0 = prețuri mixte în grup (se afișează "-")
+    val value: Double = qty * unitPrice
+)
 
 data class LaborQuote(
     val lines: List<LaborLine>,
@@ -210,9 +213,34 @@ fun tablouRows(name: String): Pair<Int, Int>? {
  *  - plus deplasare, mâncare și consumabile.
  */
 fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
-    val lines = mutableListOf<LaborLine>()
+    // grupuri comasate, în ordinea de afișare
+    val groupOrder = listOf(
+        "Montaj aparataj modular",
+        "Montaj aparataj",
+        "Montaj doze legături",
+        "Montaj corpuri de iluminat"
+    )
+
+    class Acc {
+        var qty = 0
+        var value = 0.0
+        val prices = mutableSetOf<Double>()
+    }
+
+    val groups = linkedMapOf<String, Acc>()
+    val tablouLines = mutableListOf<LaborLine>()
+
+    fun addTo(group: String, qty: Int, price: Double) {
+        val acc = groups.getOrPut(group) { Acc() }
+        acc.qty += qty
+        acc.value += qty * price
+        acc.prices += price
+    }
+
     work.categories.forEach { c ->
         val montaj = isMontajCategory(c.name)
+        val legaturi = c.name.contains("legături", ignoreCase = true) ||
+            c.name.contains("legaturi", ignoreCase = true)
         c.materials.forEach { m ->
             if (m.qty <= 0) return@forEach
             if (isTablouCarcasa(m.name)) {
@@ -220,16 +248,36 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
                     val price = cfg.rowPrices[size]
                         ?: cfg.rowPrices.minByOrNull { kotlin.math.abs(it.key - size) }?.value
                         ?: 0.0
-                    if (price > 0) lines += LaborLine(
+                    if (price > 0) tablouLines += LaborLine(
                         "Echipare tablou — etaj de $size module", rows * m.qty, price
                     )
                 }
             } else if (isDozaItem(m.name) || montaj) {
                 val price = cfg.dozaPrices[m.name.trim().lowercase()] ?: 0.0
-                if (price > 0) lines += LaborLine("Montaj ${m.name}", m.qty, price)
+                if (price > 0) {
+                    val group = when {
+                        montaj -> "Montaj corpuri de iluminat"
+                        isModularBox(m.name) -> "Montaj aparataj modular"
+                        legaturi -> "Montaj doze legături"
+                        else -> "Montaj aparataj"
+                    }
+                    addTo(group, m.qty, price)
+                }
             }
         }
     }
+
+    val lines = groupOrder.mapNotNull { name ->
+        groups[name]?.let { acc ->
+            LaborLine(
+                name = name,
+                qty = acc.qty,
+                unitPrice = if (acc.prices.size == 1) acc.prices.first() else 0.0,
+                value = acc.value
+            )
+        }
+    } + tablouLines
+
     return LaborQuote(
         lines, cfg.travel, cfg.food, cfg.consumables,
         days = 0, helperPerDay = cfg.helperPerDay

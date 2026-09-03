@@ -580,7 +580,11 @@ object PdfExporter {
         if (quote.lines.isNotEmpty()) {
             sectionRow("MANOPERĂ")
             quote.lines.forEachIndexed { i, l ->
-                row(l.name, "${l.qty}", money(l.unitPrice), money(l.value), i % 2 == 1)
+                row(
+                    l.name, "${l.qty}",
+                    if (l.unitPrice > 0) money(l.unitPrice) else "-",
+                    money(l.value), i % 2 == 1
+                )
             }
         }
         val hasExtras = quote.helperCost > 0 || quote.travel > 0 ||

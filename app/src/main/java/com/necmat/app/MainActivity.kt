@@ -1913,7 +1913,9 @@ private fun LaborQuoteDialog(vm: AppViewModel, work: Work, onDismiss: () -> Unit
                     quote.lines.forEach { l ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
                             Text(
-                                "${l.name} — ${l.qty} × ${lei(l.unitPrice)} lei",
+                                if (l.unitPrice > 0)
+                                    "${l.name} — ${l.qty} × ${lei(l.unitPrice)} lei"
+                                else "${l.name} — ${l.qty} buc",
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f)
                             )
