@@ -42,8 +42,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -983,6 +985,68 @@ private fun WorkDetailsDialog(
     var phone by remember { mutableStateOf("") }
     var overwriteId by remember { mutableStateOf<Long?>(null) }
     var filter by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var locBusy by remember { mutableStateOf(false) }
+
+    // adresa din locația curentă, prin OpenStreetMap
+    fun fetchAddress() {
+        if (locBusy) return
+        locBusy = true
+        scope.launch {
+            val loc = LocationHelper.currentLocation(context)
+            val addr = loc?.let { LocationHelper.reverseGeocode(it.latitude, it.longitude) }
+            locBusy = false
+            when {
+                addr != null -> address = addr
+                loc == null -> Toast.makeText(
+                    context, "Locația nu a putut fi determinată — pornește GPS-ul",
+                    Toast.LENGTH_LONG
+                ).show()
+                else -> Toast.makeText(
+                    context, "Nu am găsit o adresă pentru locația curentă",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    val locPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { res ->
+        if (res.values.any { it }) fetchAddress()
+        else Toast.makeText(
+            context, "Fără permisiunea de locație nu pot detecta adresa",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    // numărul de telefon din agenda de contacte
+    val contactLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(
+                    android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+                    android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
+                ),
+                null, null, null
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getString(0)?.let { phone = it }
+                    val displayName = c.getString(1)
+                    if (client.isBlank() && !displayName.isNullOrBlank()) client = displayName
+                }
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "Nu am putut citi contactul", Toast.LENGTH_LONG).show()
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -1082,13 +1146,51 @@ private fun WorkDetailsDialog(
                 OutlinedTextField(
                     value = address, onValueChange = { address = it },
                     label = { Text("Adresă — opțional") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                    singleLine = true,
+                    trailingIcon = {
+                        if (locBusy) CircularProgressIndicator(
+                            Modifier.size(18.dp), strokeWidth = 2.dp
+                        ) else IconButton(onClick = {
+                            if (LocationHelper.hasPermission(context)) fetchAddress()
+                            else locPermLauncher.launch(LocationHelper.PERMISSIONS)
+                        }) {
+                            Icon(
+                                Icons.Default.LocationOn,
+                                contentDescription = "Detectează adresa din locație",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = phone, onValueChange = { phone = it },
                     label = { Text("Telefon — opțional") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            try {
+                                contactLauncher.launch(
+                                    Intent(Intent.ACTION_PICK).apply {
+                                        type = android.provider.ContactsContract
+                                            .CommonDataKinds.Phone.CONTENT_TYPE
+                                    }
+                                )
+                            } catch (e: Exception) {
+                                Toast.makeText(
+                                    context, "Agenda de contacte nu e disponibilă",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }) {
+                            Icon(
+                                Icons.Default.Person,
+                                contentDescription = "Alege din contacte",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
             }

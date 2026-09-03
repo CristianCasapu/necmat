@@ -19,8 +19,8 @@ android {
         applicationId = "com.necmat.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "1.17"
+        versionCode = 19
+        versionName = "1.18"
     }
 
     // github = distribuție prin GitHub Releases (cu self-update)
