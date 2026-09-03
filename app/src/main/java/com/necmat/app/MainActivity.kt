@@ -146,7 +146,9 @@ private fun exportPdfAndShare(context: Context, vm: AppViewModel, work: Work) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Trimite PDF"))
+        AppLog.i("Pdf", "PDF materiale generat: ${result.fileName}")
     } catch (e: Exception) {
+        AppLog.e("Pdf", "Eroare la generarea PDF de materiale", e)
         Toast.makeText(context, "Eroare la generarea PDF", Toast.LENGTH_LONG).show()
     }
 }
@@ -176,8 +178,38 @@ private fun exportLaborPdfAndShare(
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Trimite oferta"))
+        AppLog.i("Pdf", "Ofertă manoperă generată: ${result.fileName}, total=${String.format(java.util.Locale.US, "%.2f", quote.total)}")
     } catch (e: Exception) {
+        AppLog.e("Pdf", "Eroare la generarea ofertei de manoperă", e)
         Toast.makeText(context, "Eroare la generarea ofertei", Toast.LENGTH_LONG).show()
+    }
+}
+
+/** Trimite jurnalul de activitate (cu antet de diagnostic) prin partajare. */
+private fun shareLogs(context: Context) {
+    try {
+        val header = "NecMat v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})  ·  " +
+            "Android ${android.os.Build.VERSION.RELEASE}  ·  " +
+            "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n" +
+            "-".repeat(60) + "\n"
+        val body = AppLog.currentFile()?.takeIf { it.exists() }?.readText().orEmpty()
+        val dir = File(context.cacheDir, "backup").apply { mkdirs() }
+        val out = File(dir, "NecMat-loguri.txt")
+        out.writeText(header + body.ifBlank { "(jurnal gol)" })
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", out
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "Loguri NecMat v${BuildConfig.VERSION_NAME}")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Trimite logurile"))
+        AppLog.i("Loguri", "Jurnal partajat (${body.length} caractere)")
+    } catch (e: Exception) {
+        AppLog.e("Loguri", "Eroare la partajarea jurnalului", e)
+        Toast.makeText(context, "Eroare la trimiterea logurilor", Toast.LENGTH_LONG).show()
     }
 }
 
@@ -198,7 +230,9 @@ private fun exportBackupAndShare(context: Context, json: String) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Salvează backup-ul"))
+        AppLog.i("Backup", "Backup exportat")
     } catch (e: Exception) {
+        AppLog.e("Backup", "Eroare la exportul backup-ului", e)
         Toast.makeText(context, "Eroare la exportul datelor", Toast.LENGTH_LONG).show()
     }
 }
@@ -1519,6 +1553,7 @@ private fun SettingsScreen(
     var showDozaLabor by remember { mutableStateOf(false) }
     var showMaterialPrices by remember { mutableStateOf(false) }
     var showManageMaterials by remember { mutableStateOf(false) }
+    var showLogs by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -1734,6 +1769,47 @@ private fun SettingsScreen(
             }
         }
 
+        SettingsHeader("Depanare")
+        SwitchRow(
+            title = "Jurnal de activitate (logging)",
+            subtitle = "Înregistrează operațiile aplicației; la o problemă, trimite " +
+                "logurile ca defectul să poată fi identificat și reparat",
+            checked = vm.logEnabled,
+            onChange = { vm.setLogging(it, vm.logLevel) }
+        )
+        if (vm.logEnabled) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(
+                    AppLog.Level.DEBUG to "Debug",
+                    AppLog.Level.INFO to "Info",
+                    AppLog.Level.WARN to "Warn",
+                    AppLog.Level.ERROR to "Error"
+                ).forEach { (level, label) ->
+                    FilterChip(
+                        selected = vm.logLevel == level,
+                        onClick = { vm.setLogging(true, level) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { shareLogs(context) }, modifier = Modifier.weight(1f)) {
+                    Text("Trimite logurile")
+                }
+                OutlinedButton(onClick = { showLogs = true }, modifier = Modifier.weight(1f)) {
+                    Text("Vezi")
+                }
+                OutlinedButton(
+                    onClick = {
+                        AppLog.clear()
+                        Toast.makeText(context, "Jurnal golit", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Șterge") }
+            }
+        }
+
         Spacer(Modifier.height(18.dp))
         Text(
             "NecMat v${BuildConfig.VERSION_NAME}",
@@ -1749,6 +1825,25 @@ private fun SettingsScreen(
     if (showDozaLabor) DozaLaborDialog(vm, onDismiss = { showDozaLabor = false })
     if (showMaterialPrices) MaterialPricesDialog(vm, onDismiss = { showMaterialPrices = false })
     if (showManageMaterials) ManageMaterialsDialog(vm, onDismiss = { showManageMaterials = false })
+    if (showLogs) AlertDialog(
+        onDismissRequest = { showLogs = false },
+        title = { Text("Jurnal de activitate") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    AppLog.readTail().ifBlank { "(jurnal gol)" },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    fontSize = 10.sp
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { showLogs = false }) { Text("Închide") } }
+    )
 }
 
 /** Gestionarea centralizată a materialelor: redenumire, ștergere, adăugare. */

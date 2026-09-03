@@ -47,7 +47,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var saveJob: Job? = null
 
+    var logEnabled by mutableStateOf(true)
+        private set
+    var logLevel by mutableStateOf(AppLog.Level.INFO)
+        private set
+
+    fun setLogging(enabled: Boolean, level: AppLog.Level) {
+        logEnabled = enabled
+        logLevel = level
+        AppLog.enabled = enabled
+        AppLog.minLevel = level
+        prefs().edit()
+            .putBoolean("log_enabled", enabled)
+            .putString("log_level", level.name)
+            .apply()
+        AppLog.i("Setari", "Logging: enabled=$enabled, nivel=$level")
+    }
+
     init {
+        // jurnalul pornește primul, ca migrările să fie înregistrate
+        AppLog.init(java.io.File(app.filesDir, "necmat_log.txt"))
+        logEnabled = prefs().getBoolean("log_enabled", true)
+        logLevel = runCatching {
+            AppLog.Level.valueOf(prefs().getString("log_level", "INFO") ?: "INFO")
+        }.getOrDefault(AppLog.Level.INFO)
+        AppLog.enabled = logEnabled
+        AppLog.minLevel = logLevel
+        AppLog.installCrashHandler()
+        AppLog.i(
+            "App",
+            "Pornire NecMat v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), " +
+                "Android ${android.os.Build.VERSION.RELEASE}, " +
+                "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+        )
         // migrare v3: module TV/rețea + aparataj încastrat pentru instalările existente
         if (!prefs().getBoolean("migr_v3", false)) {
             categories = migrateV3(categories) { newId() }
@@ -126,6 +158,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 Repo.saveBrands(getApplication(), brands)
             }
             prefs().edit().putInt("last_vc", BuildConfig.VERSION_CODE).apply()
+            AppLog.i("Migrari", "Auto-reparare rulată pentru versiunea ${BuildConfig.VERSION_CODE}")
         }
         // reparare id-uri duplicate (generatorul vechi putea produce coliziuni)
         val deduped = Repo.fixDuplicateIds(categories) { newId() }
@@ -161,6 +194,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Restaurează starea dinaintea ultimei ștergeri. */
     fun undoDelete(): Boolean {
         val s = undoState ?: return false
+        AppLog.i("Materiale", "Ștergere anulată (undo)")
         categories = s.first
         works = s.second
         undoState = null
@@ -208,6 +242,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun addMaterial(catId: Long, name: String) = update { cats ->
+        AppLog.i("Materiale", "Material adăugat în $catId: $name")
         cats.map { c ->
             if (c.id != catId) c
             else c.copy(materials = c.materials + Material(newId(), name.trim()))
@@ -225,6 +260,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteMaterial(catId: Long, matId: Long) {
         rememberUndo()
+        AppLog.i("Materiale", "Material șters: cat=$catId, mat=$matId")
         update { cats ->
             cats.map { c ->
                 if (c.id != catId) c else c.copy(materials = c.materials.filter { it.id != matId })
@@ -233,6 +269,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun addCategory(name: String) = update { cats ->
+        AppLog.i("Materiale", "Categorie adăugată: $name")
         cats + Category(newId(), name.trim())
     }
 
@@ -242,6 +279,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteCategory(catId: Long) {
         rememberUndo()
+        AppLog.i("Materiale", "Categorie ștearsă: $catId")
         update { cats -> cats.filter { it.id != catId } }
     }
 
@@ -309,7 +347,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
     }
 
-    fun restoreDefaults() = update { Repo.defaultCatalog() }
+    fun restoreDefaults() = update {
+        AppLog.w("Materiale", "Lista implicită restaurată — catalogul utilizatorului a fost înlocuit")
+        Repo.defaultCatalog()
+    }
 
     // ---- lucrări salvate ----
 
@@ -353,11 +394,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (w.categories.isEmpty()) return false
         works = replaceWork(works, w, overwriteId)
         persistWorks()
+        AppLog.i("Lucrari", if (overwriteId != null) "Lucrare actualizată: ${w.name}" else "Lucrare salvată: ${w.name}")
         if (settings.clearAfterSave) resetQuantities()
         return true
     }
 
     fun duplicateWork(work: Work) {
+        AppLog.i("Lucrari", "Lucrare duplicată: ${work.name}")
         works = listOf(
             work.copy(
                 id = newId(),
@@ -370,12 +413,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteWork(workId: Long) {
         rememberUndo()
+        AppLog.i("Lucrari", "Lucrare ștearsă: ${works.firstOrNull { it.id == workId }?.name}")
         works = works.filter { it.id != workId }
         persistWorks()
     }
 
     /** Marchează / demarchează o lucrare ca șablon. */
     fun toggleTemplate(workId: Long) {
+        AppLog.i("Lucrari", "Șablon comutat pentru lucrarea $workId")
         works = works.map { w ->
             if (w.id != workId) w else w.copy(isTemplate = !w.isTemplate)
         }
