@@ -40,6 +40,47 @@ object PdfExporter {
 
     data class Result(val shareUri: Uri, val savedToDownloads: Boolean, val fileName: String)
 
+    /**
+     * Salvează PDF-ul în Descărcări/NecMat. Dacă există deja un fișier cu
+     * același nume, îl suprascrie — nu se creează dubluri „(1).pdf".
+     */
+    private fun saveToDownloads(context: Context, file: File, fileName: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return try {
+            val resolver = context.contentResolver
+            val relPath = Environment.DIRECTORY_DOWNLOADS + "/NecMat/"
+            var uri: Uri? = null
+            resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Downloads._ID),
+                "${MediaStore.Downloads.DISPLAY_NAME}=? AND ${MediaStore.Downloads.RELATIVE_PATH}=?",
+                arrayOf(fileName, relPath),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    uri = android.content.ContentUris.withAppendedId(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI, cursor.getLong(0)
+                    )
+                }
+            }
+            if (uri == null) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
+                    put(MediaStore.Downloads.RELATIVE_PATH, relPath)
+                }
+                uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            }
+            val target = uri ?: return false
+            resolver.openOutputStream(target, "wt")?.use { out ->
+                file.inputStream().use { it.copyTo(out) }
+            } ?: return false
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun export(
         context: Context,
         work: Work,
@@ -356,29 +397,7 @@ object PdfExporter {
         file.outputStream().use { doc.writeTo(it) }
         doc.close()
 
-        var savedToDownloads = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                    put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
-                    put(
-                        MediaStore.Downloads.RELATIVE_PATH,
-                        Environment.DIRECTORY_DOWNLOADS + "/NecMat"
-                    )
-                }
-                val uri = context.contentResolver
-                    .insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                if (uri != null) {
-                    context.contentResolver.openOutputStream(uri)?.use { out ->
-                        file.inputStream().use { it.copyTo(out) }
-                    }
-                    savedToDownloads = true
-                }
-            } catch (e: Exception) {
-                // ignorăm — rămâne varianta de partajare
-            }
-        }
+        val savedToDownloads = saveToDownloads(context, file, fileName)
 
         val shareUri = FileProvider.getUriForFile(
             context, "${context.packageName}.fileprovider", file
@@ -606,26 +625,7 @@ object PdfExporter {
         file.outputStream().use { doc.writeTo(it) }
         doc.close()
 
-        var savedToDownloads = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                    put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
-                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/NecMat")
-                }
-                val uri = context.contentResolver
-                    .insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                if (uri != null) {
-                    context.contentResolver.openOutputStream(uri)?.use { out ->
-                        file.inputStream().use { it.copyTo(out) }
-                    }
-                    savedToDownloads = true
-                }
-            } catch (e: Exception) {
-                // ignorăm
-            }
-        }
+        val savedToDownloads = saveToDownloads(context, file, fileName)
         val shareUri = FileProvider.getUriForFile(
             context, "${context.packageName}.fileprovider", file
         )
