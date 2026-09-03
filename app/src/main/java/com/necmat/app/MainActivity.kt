@@ -1008,17 +1008,41 @@ private fun WorkDetailsDialog(
     onDismiss: () -> Unit,
     onConfirm: (String, String, String, String, Long?) -> Unit
 ) {
-    var name by remember {
-        mutableStateOf(
-            "Necesar materiale " +
-                SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
-        )
+    val initialName = remember {
+        "Necesar materiale " +
+            SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
     }
+    var name by remember { mutableStateOf(initialName) }
     var client by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var overwriteId by remember { mutableStateOf<Long?>(null) }
     var filter by remember { mutableStateOf("") }
+    var confirmExit by remember { mutableStateOf(false) }
+
+    // protecție la ieșire: dacă s-a completat ceva, cerem confirmare
+    val dirty = name != initialName || client.isNotBlank() ||
+        address.isNotBlank() || phone.isNotBlank() || overwriteId != null
+    val requestDismiss = { if (dirty) confirmExit = true else onDismiss() }
+
+    if (confirmExit) {
+        AlertDialog(
+            onDismissRequest = { confirmExit = false },
+            title = { Text("Ieși din formular?") },
+            text = { Text("Datele completate se vor pierde.") },
+            confirmButton = {
+                TextButton(
+                    onClick = { confirmExit = false; onDismiss() },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("Ies fără salvare") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmExit = false }) { Text("Rămân în formular") }
+            }
+        )
+    }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1082,7 +1106,7 @@ private fun WorkDetailsDialog(
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { requestDismiss() },
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1237,7 +1261,7 @@ private fun WorkDetailsDialog(
                 enabled = name.isNotBlank()
             ) { Text(confirmLabel) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Anulează") } }
+        dismissButton = { TextButton(onClick = { requestDismiss() }) { Text("Anulează") } }
     )
 }
 
