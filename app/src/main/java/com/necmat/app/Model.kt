@@ -336,18 +336,26 @@ fun Work.filterForPdf(includeBoxes: Boolean): Work {
     )
 }
 
-/** Adaugă lucrarea în listă; o lucrare existentă cu același nume este înlocuită. */
-fun upsertWork(works: List<Work>, w: Work): List<Work> =
-    listOf(w) + works.filterNot { it.name.trim().equals(w.name.trim(), ignoreCase = true) }
+/**
+ * Adaugă lucrarea în listă; o lucrare existentă cu același nume este
+ * înlocuită (păstrându-și statutul de șablon).
+ */
+fun upsertWork(works: List<Work>, w: Work): List<Work> {
+    val old = works.firstOrNull { it.name.trim().equals(w.name.trim(), ignoreCase = true) }
+    val keep = w.copy(isTemplate = w.isTemplate || old?.isTemplate == true)
+    return listOf(keep) +
+        works.filterNot { it.name.trim().equals(w.name.trim(), ignoreCase = true) }
+}
 
 /**
- * Înlocuiește complet lucrarea cu id-ul dat (nume + toate detaliile).
- * Dacă overwriteId nu există în listă, lucrarea e adăugată normal (după nume).
+ * Înlocuiește complet lucrarea cu id-ul dat (nume + toate detaliile),
+ * păstrându-i statutul de șablon. Dacă overwriteId nu există în listă,
+ * lucrarea e adăugată normal (după nume).
  */
 fun replaceWork(works: List<Work>, w: Work, overwriteId: Long?): List<Work> {
-    if (overwriteId == null || works.none { it.id == overwriteId }) return upsertWork(works, w)
-    return listOf(w.copy(id = overwriteId)) +
-        works.filterNot { it.id == overwriteId || it.name.trim().equals(w.name.trim(), ignoreCase = true) }
+    val old = works.firstOrNull { it.id == overwriteId } ?: return upsertWork(works, w)
+    return listOf(w.copy(id = old.id, isTemplate = w.isTemplate || old.isTemplate)) +
+        works.filterNot { it.id == old.id || it.name.trim().equals(w.name.trim(), ignoreCase = true) }
 }
 
 /**
@@ -694,40 +702,44 @@ object Repo {
         )
     }
 
+    fun laborToJson(cfg: LaborConfig): JSONObject {
+        val doza = JSONObject()
+        cfg.dozaPrices.forEach { (k, v) -> if (v > 0) doza.put(k, v) }
+        val rows = JSONObject()
+        cfg.rowPrices.forEach { (k, v) -> if (v > 0) rows.put(k.toString(), v) }
+        return JSONObject().put("doza", doza).put("rows", rows)
+            .put("travel", cfg.travel).put("food", cfg.food)
+            .put("consumables", cfg.consumables)
+            .put("helperPerDay", cfg.helperPerDay)
+    }
+
+    fun laborFromJson(o: JSONObject): LaborConfig {
+        val doza = o.optJSONObject("doza") ?: JSONObject()
+        val rows = o.optJSONObject("rows") ?: JSONObject()
+        return LaborConfig(
+            dozaPrices = doza.keys().asSequence().associateWith { doza.getDouble(it) },
+            rowPrices = rows.keys().asSequence()
+                .mapNotNull { k -> k.toIntOrNull()?.let { it to rows.getDouble(k) } }
+                .toMap(),
+            travel = o.optDouble("travel", 0.0),
+            food = o.optDouble("food", 0.0),
+            consumables = o.optDouble("consumables", 0.0),
+            helperPerDay = o.optDouble("helperPerDay", 250.0)
+        )
+    }
+
     fun loadLabor(context: Context): LaborConfig {
         val f = File(context.filesDir, LABOR_FILE)
         if (!f.exists()) return defaultLaborConfig()
         return try {
-            val o = JSONObject(f.readText())
-            val doza = o.optJSONObject("doza") ?: JSONObject()
-            val rows = o.optJSONObject("rows") ?: JSONObject()
-            mergeLaborDefaults(LaborConfig(
-                dozaPrices = doza.keys().asSequence()
-                    .associateWith { doza.getDouble(it) },
-                rowPrices = rows.keys().asSequence()
-                    .mapNotNull { k -> k.toIntOrNull()?.let { it to rows.getDouble(k) } }
-                    .toMap(),
-                travel = o.optDouble("travel", 0.0),
-                food = o.optDouble("food", 0.0),
-                consumables = o.optDouble("consumables", 0.0),
-                helperPerDay = o.optDouble("helperPerDay", 250.0)
-            ))
+            mergeLaborDefaults(laborFromJson(JSONObject(f.readText())))
         } catch (e: Exception) {
             defaultLaborConfig()
         }
     }
 
     fun saveLabor(context: Context, cfg: LaborConfig) {
-        val doza = JSONObject()
-        cfg.dozaPrices.forEach { (k, v) -> if (v > 0) doza.put(k, v) }
-        val rows = JSONObject()
-        cfg.rowPrices.forEach { (k, v) -> if (v > 0) rows.put(k.toString(), v) }
-        File(context.filesDir, LABOR_FILE).writeText(
-            JSONObject().put("doza", doza).put("rows", rows)
-                .put("travel", cfg.travel).put("food", cfg.food)
-                .put("consumables", cfg.consumables)
-                .put("helperPerDay", cfg.helperPerDay).toString()
-        )
+        File(context.filesDir, LABOR_FILE).writeText(laborToJson(cfg).toString())
     }
 
     // ---- backup / restaurare ----
@@ -735,7 +747,9 @@ object Repo {
     fun backupJson(
         categories: List<Category>,
         works: List<Work>,
-        brands: List<BrandEntry> = emptyList()
+        brands: List<BrandEntry> = emptyList(),
+        labor: LaborConfig? = null,
+        settings: JSONObject? = null
     ): String {
         val cats = JSONArray()
         categories.forEach { cats.put(catToJson(it)) }
@@ -743,16 +757,20 @@ object Repo {
         works.forEach { ws.put(workToJson(it)) }
         val bs = JSONArray()
         brands.forEach { bs.put(brandToJson(it)) }
-        return JSONObject()
-            .put("app", "NecMat").put("version", 2)
+        val o = JSONObject()
+            .put("app", "NecMat").put("version", 3)
             .put("categories", cats).put("works", ws).put("brands", bs)
-            .toString(2)
+        if (labor != null) o.put("labor", laborToJson(labor))
+        if (settings != null) o.put("settings", settings)
+        return o.toString(2)
     }
 
     data class Backup(
         val categories: List<Category>,
         val works: List<Work>,
-        val brands: List<BrandEntry>
+        val brands: List<BrandEntry>,
+        val labor: LaborConfig? = null,
+        val settings: JSONObject? = null
     )
 
     /** Returnează datele din backup sau null dacă fișierul nu e valid. */
@@ -766,7 +784,9 @@ object Repo {
             Backup(
                 categories = (0 until cats.length()).map { catFromJson(cats.getJSONObject(it)) },
                 works = (0 until ws.length()).map { workFromJson(ws.getJSONObject(it)) },
-                brands = (0 until bs.length()).map { brandFromJson(bs.getJSONObject(it)) }
+                brands = (0 until bs.length()).map { brandFromJson(bs.getJSONObject(it)) },
+                labor = o.optJSONObject("labor")?.let { laborFromJson(it) },
+                settings = o.optJSONObject("settings")
             )
         }
     } catch (e: Exception) {
@@ -898,13 +918,30 @@ object Repo {
         var out = cats
         out = migrateV3(out, newId)
         out = renameTermCategories(out)
-        out = migrateV4(out, newId)
+        out = addV4Materials(out, newId)   // fără re-sortare: ordinea rămâne a utilizatorului
         out = migrateV5(out, newId)
         out = migrateV7(out, newId)
         out = migrateV8(out, newId)
         out = migrateV9(out, newId)
         out = migrateV10(out)
-        return out
+        return fixDuplicateIds(out, newId)
+    }
+
+    /** Reasignează id-urile duplicate (moștenite din generatorul vechi de id-uri). */
+    fun fixDuplicateIds(cats: List<Category>, newId: () -> Long): List<Category> {
+        val seen = mutableSetOf<Long>()
+        fun nextFree(): Long {
+            var id = newId()
+            while (!seen.add(id)) id = newId()
+            return id
+        }
+        return cats.map { c ->
+            val cid = if (seen.add(c.id)) c.id else nextFree()
+            val mats = c.materials.map { m ->
+                if (seen.add(m.id)) m else m.copy(id = nextFree())
+            }
+            c.copy(id = cid, materials = mats)
+        }
     }
 
     /** Migrare v10: „Priză dublă (2 module)" devine „Priză 2 module". */
@@ -957,8 +994,8 @@ object Repo {
         return cats.sortedBy { rank[it.name.trim().lowercase()] ?: Int.MAX_VALUE }
     }
 
-    /** Migrare v4: materiale noi pentru tablou și doze legături + ordinea canonică. */
-    fun migrateV4(cats: List<Category>, newId: () -> Long): List<Category> {
+    /** Partea aditivă a migrării v4 (fără re-sortarea categoriilor). */
+    fun addV4Materials(cats: List<Category>, newId: () -> Long): List<Category> {
         fun addMissing(c: Category, items: List<String>): Category {
             var out = c
             items.forEach { name ->
@@ -968,15 +1005,18 @@ object Repo {
             }
             return out
         }
-        val augmented = cats.map { c ->
+        return cats.map { c ->
             when (c.name.trim().lowercase()) {
                 "tablou electric" -> addMissing(c, tablouExtras)
                 "doze legături" -> addMissing(c, dozeLegaturiExtras)
                 else -> c
             }
         }
-        return sortCanonical(augmented)
     }
+
+    /** Migrare v4: materiale noi pentru tablou și doze legături + ordinea canonică. */
+    fun migrateV4(cats: List<Category>, newId: () -> Long): List<Category> =
+        sortCanonical(addV4Materials(cats, newId))
 
     /**
      * Migrare v7: priza dublă modulară primește numele explicit "(2 module)",

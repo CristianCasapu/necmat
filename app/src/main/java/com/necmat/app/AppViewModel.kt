@@ -117,13 +117,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             prefs().edit().putBoolean("migr_v10", true).apply()
         }
         // auto-reparare: la fiecare versiune nouă a aplicației, completează
-        // materialele lipsă (ex. listă restaurată dintr-un backup vechi)
+        // materialele și mărcile lipsă (ex. listă restaurată dintr-un backup vechi)
         if (prefs().getInt("last_vc", 0) != BuildConfig.VERSION_CODE) {
             categories = Repo.applyAllMigrations(categories) { newId() }
+            brands = Repo.mergeBrands(brands, Repo.seedBrands())
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+                Repo.saveBrands(getApplication(), brands)
+            }
+            prefs().edit().putInt("last_vc", BuildConfig.VERSION_CODE).apply()
+        }
+        // reparare id-uri duplicate (generatorul vechi putea produce coliziuni)
+        val deduped = Repo.fixDuplicateIds(categories) { newId() }
+        if (deduped != categories) {
+            categories = deduped
             viewModelScope.launch(Dispatchers.IO) {
                 Repo.save(getApplication(), categories)
             }
-            prefs().edit().putInt("last_vc", BuildConfig.VERSION_CODE).apply()
+        }
+        if (works.map { it.id }.toSet().size != works.size) {
+            val seen = mutableSetOf<Long>()
+            works = works.map { w -> if (seen.add(w.id)) w else w.copy(id = newId()) }
+            persistWorks()
         }
     }
 
@@ -167,7 +182,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         persist()
     }
 
-    private fun newId() = System.currentTimeMillis() + (0..999).random()
+    // id-uri strict crescătoare: nu se pot genera duplicate nici când
+    // migrările adaugă zeci de materiale în aceeași milisecundă
+    private var lastGeneratedId = 0L
+    private fun newId(): Long {
+        val id = maxOf(System.currentTimeMillis(), lastGeneratedId + 1)
+        lastGeneratedId = id
+        return id
+    }
 
     fun changeQty(catId: Long, matId: Long, delta: Int) = update { cats ->
         cats.map { c ->
@@ -397,13 +419,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         result
     }
 
+    /** Text pentru Copiază/Trimite — același conținut ca PDF-ul de materiale. */
     fun summaryText(): String {
+        val prepared = preparePdfWork(snapshot("Necesar"))
         val sb = StringBuilder("Necesar materiale\n")
-        categories.forEach { c ->
-            val sel = c.materials.filter { it.qty > 0 }
-            if (sel.isNotEmpty()) {
-                sb.append("\n").append(c.name).append(":\n")
-                sel.forEach { m -> sb.append("  • ").append(m.name).append(" — ").append(m.qty).append(" buc\n") }
+        prepared.categories.forEach { c ->
+            if (c.materials.isEmpty()) return@forEach
+            sb.append("\n").append(c.name)
+            if (c.brandLabel.isNotEmpty()) sb.append(" — ").append(c.brandLabel)
+            sb.append(":\n")
+            val um = if (c.name.contains("(m)")) "m" else "buc"
+            c.materials.forEach { m ->
+                sb.append("  • ").append(m.name).append(" — ").append(m.qty)
+                    .append(" ").append(um).append("\n")
             }
         }
         return sb.toString()
@@ -462,7 +490,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- backup / restaurare ----
 
-    fun backupJson(): String = Repo.backupJson(categories, works, brands)
+    private fun settingsToJson(): org.json.JSONObject = org.json.JSONObject()
+        .put("installerName", settings.installerName)
+        .put("installerPhone", settings.installerPhone)
+        .put("installerCompany", settings.installerCompany)
+        .put("includeBoxesInPdf", settings.includeBoxesInPdf)
+        .put("autoAccessories", settings.autoAccessories)
+        .put("clearAfterSave", settings.clearAfterSave)
+        .put("detailExpensesInOffer", settings.detailExpensesInOffer)
+        .put("materialPrices", settings.materialPrices)
+
+    fun backupJson(): String =
+        Repo.backupJson(categories, works, brands, labor, settingsToJson())
 
     /** Înlocuiește toate datele cu cele din backup. Întoarce false dacă fișierul e invalid. */
     fun restoreBackup(text: String): Boolean {
@@ -471,11 +510,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         categories = Repo.applyAllMigrations(parsed.categories) { newId() }
         works = parsed.works
         if (parsed.brands.isNotEmpty()) brands = parsed.brands
+        parsed.labor?.let { labor = Repo.mergeLaborDefaults(it) }
+        parsed.settings?.let { s ->
+            saveSettings(
+                settings.copy(
+                    installerName = s.optString("installerName", settings.installerName),
+                    installerPhone = s.optString("installerPhone", settings.installerPhone),
+                    installerCompany = s.optString("installerCompany", settings.installerCompany),
+                    includeBoxesInPdf = s.optBoolean("includeBoxesInPdf", settings.includeBoxesInPdf),
+                    autoAccessories = s.optBoolean("autoAccessories", settings.autoAccessories),
+                    clearAfterSave = s.optBoolean("clearAfterSave", settings.clearAfterSave),
+                    detailExpensesInOffer = s.optBoolean("detailExpensesInOffer", settings.detailExpensesInOffer),
+                    materialPrices = s.optBoolean("materialPrices", settings.materialPrices)
+                )
+            )
+        }
         val cats = categories
+        val lab = labor
         viewModelScope.launch(Dispatchers.IO) {
             Repo.save(getApplication(), cats)
             Repo.saveWorks(getApplication(), parsed.works)
             if (parsed.brands.isNotEmpty()) Repo.saveBrands(getApplication(), parsed.brands)
+            if (parsed.labor != null) Repo.saveLabor(getApplication(), lab)
         }
         return true
     }
