@@ -116,6 +116,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             prefs().edit().putBoolean("migr_v10", true).apply()
         }
+        // auto-reparare: la fiecare versiune nouă a aplicației, completează
+        // materialele lipsă (ex. listă restaurată dintr-un backup vechi)
+        if (prefs().getInt("last_vc", 0) != BuildConfig.VERSION_CODE) {
+            categories = Repo.applyAllMigrations(categories) { newId() }
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+            }
+            prefs().edit().putInt("last_vc", BuildConfig.VERSION_CODE).apply()
+        }
+    }
+
+    /** Completează manual materialele lipsă; întoarce câte a adăugat. */
+    fun repairCatalog(): Int {
+        val before = categories.sumOf { it.materials.size }
+        categories = Repo.applyAllMigrations(categories) { newId() }
+        persist()
+        return categories.sumOf { it.materials.size } - before
     }
 
     // ---- anulare (undo) pentru ștergeri ----
@@ -450,11 +467,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Înlocuiește toate datele cu cele din backup. Întoarce false dacă fișierul e invalid. */
     fun restoreBackup(text: String): Boolean {
         val parsed = Repo.parseBackup(text) ?: return false
-        categories = parsed.categories
+        // backupurile vechi primesc automat materialele adăugate între timp
+        categories = Repo.applyAllMigrations(parsed.categories) { newId() }
         works = parsed.works
         if (parsed.brands.isNotEmpty()) brands = parsed.brands
+        val cats = categories
         viewModelScope.launch(Dispatchers.IO) {
-            Repo.save(getApplication(), parsed.categories)
+            Repo.save(getApplication(), cats)
             Repo.saveWorks(getApplication(), parsed.works)
             if (parsed.brands.isNotEmpty()) Repo.saveBrands(getApplication(), parsed.brands)
         }

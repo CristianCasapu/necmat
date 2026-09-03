@@ -1410,6 +1410,7 @@ private fun SettingsScreen(
     onRestoreDefaults: () -> Unit,
     onCheckUpdates: () -> Unit
 ) {
+    val context = LocalContext.current
     val s = vm.settings
     var showReorder by remember { mutableStateOf(false) }
     var showBrands by remember { mutableStateOf(false) }
@@ -1570,6 +1571,19 @@ private fun SettingsScreen(
         }
 
         SettingsHeader("Listă și date")
+        OutlinedButton(
+            onClick = {
+                val added = vm.repairCatalog()
+                Toast.makeText(
+                    context,
+                    if (added > 0) "S-au adăugat $added materiale lipsă"
+                    else "Lista e completă — nimic de adăugat",
+                    Toast.LENGTH_LONG
+                ).show()
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Adaugă materialele lipsă (reparare listă)") }
+        Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = { showManageMaterials = true },
             modifier = Modifier.fillMaxWidth()

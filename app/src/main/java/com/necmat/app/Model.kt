@@ -841,6 +841,24 @@ object Repo {
         )
     }
 
+    /**
+     * Rulează tot lanțul de migrări aditive (idempotente): completează
+     * materialele lipsă și redenumirile, fără a atinge cantități, prețuri,
+     * mărci sau materialele adăugate de utilizator.
+     */
+    fun applyAllMigrations(cats: List<Category>, newId: () -> Long): List<Category> {
+        var out = cats
+        out = migrateV3(out, newId)
+        out = renameTermCategories(out)
+        out = migrateV4(out, newId)
+        out = migrateV5(out, newId)
+        out = migrateV7(out, newId)
+        out = migrateV8(out, newId)
+        out = migrateV9(out, newId)
+        out = migrateV10(out)
+        return out
+    }
+
     /** Migrare v10: „Priză dublă (2 module)" devine „Priză 2 module". */
     fun migrateV10(cats: List<Category>): List<Category> = cats.map { c ->
         if (!c.name.trim().equals("module", ignoreCase = true)) c
