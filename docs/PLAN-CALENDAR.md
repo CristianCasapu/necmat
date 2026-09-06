@@ -1,6 +1,6 @@
 # Plan funcții noi: Materiale existente la client · Clienți · Scanare buletin · Calendar și programări
 
-Stare: **în lucru** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23.
+Stare: **în lucru** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23; Etapa 1 livrată în v1.24 (Setările au trecut în meniul ⋮ cât timp tab-ul Calendar e activ).
 Fiecare etapă = o versiune publicată separat (teste → build → bump → commit → release),
 ca să poți folosi și testa pe teren fiecare bucată înainte de următoarea.
 
@@ -33,7 +33,7 @@ e independentă de calendar, e cea mai mică și aduce câștig imediat la fieca
 |---|---|---|
 | Unde apare calendarul | Al 5-lea tab în bara de jos: **Necesar · Sumar · Lucrări · Calendar · Setări** | Material3 permite 3–5 taburi; calendarul e folosit zilnic, merită acces direct |
 | Unde apar clienții | **Pagină proprie „Clienți”**, tab în bara de jos | Cerință: pagină de administrare cu adăugare / editare / ștergere |
-| Bara de jos cu 6 ecrane | Bara devine **Necesar · Sumar · Lucrări · Clienți · Calendar**; **Setări** se mută în meniul ⋮ din dreapta-sus (unde sunt deja acțiunile rare) | Material3 recomandă maxim 5 taburi; Setările se deschid rar, Clienții și Calendarul zilnic. Alternativă dacă nu-ți place: Calendar în meniul ⋮ în loc de Setări |
+| Bara de jos cu 6 ecrane | **Implementat (v1.24)**: bara e **Materiale · Necesar · Lucrări · Clienți · Calendar**, iar **Setări** e în meniul ⋮ din dreapta-sus. Dacă dezactivezi pagina Calendar din Setări, tab-ul Setări revine jos | Material3 recomandă maxim 5 taburi; Setările se deschid rar, Clienții și Calendarul zilnic |
 | Recunoaștere text (OCR) | **ML Kit Text Recognition** (Google, rulează pe telefon, model latin inclus în APK; ~14 MB pe arm64, ~45 MB universal) | Singura opțiune matură fără server; funcționează offline; nu trimite imaginea nicăieri |
 | CNP | Se salvează doar local, în fișa clientului; **nu** intră niciodată în PDF sau în textul de Copiază/Trimite; în listă apare mascat (`•••••••••1234`); setare „Salvează CNP-ul” (implicit pornit) | E dată cu caracter special în România; o ținem doar cât e nevoie și doar pe telefon |
 | Ascundere | Setare „Arată calendarul” (implicit pornit) | Regula ta: nu ștergem funcții, doar ascundem din setări |
@@ -233,41 +233,41 @@ Fundația pentru scanare, programări și agenda telefonului. Fără ea, fiecare
 
 ---
 
-## Etapa 1 — Programări + agendă zilnică (v1.24)
+## Etapa 1 — Programări + agendă zilnică (v1.24) — ✅ livrată 2026-09-06
 
 Aici apare valoarea reală: știi unde trebuie să fii și când.
 
 **Model** (`Calendar.kt`)
-- [ ] `data class Appointment(id, clientId?, workId?, title, start: Long, durationMin: Int,
+- [x] `data class Appointment(id, clientId?, workId?, title, start: Long, durationMin: Int,
       allDay: Boolean, type, status, notes, createdAt)`
-- [ ] `enum AppointmentType { VIZITA, OFERTA, EXECUTIE, REVIZIE, ALTELE }` — cu culoare/iconiță
-- [ ] `enum AppointmentStatus { PROGRAMAT, CONFIRMAT, FINALIZAT, ANULAT }`
-- [ ] Fișier `necmat_appointments.json`; intră în backup v4
-- [ ] Funcții pure: grupare pe zile, sortare, **detectare suprapuneri**, „următoarea programare”
+- [x] `enum AppointmentType { VIZITA, OFERTA, EXECUTIE, REVIZIE, ALTELE }` — cu culoare/iconiță
+- [x] `enum AppointmentStatus { PROGRAMAT, CONFIRMAT, FINALIZAT, ANULAT }`
+- [x] Fișier `necmat_appointments.json`; intră în backup v4
+- [x] Funcții pure: grupare pe zile, sortare, **detectare suprapuneri**, „următoarea programare”
 
 **UI — tab Calendar, vizualizarea „Agendă”**
-- [ ] Listă grupată: Azi · Mâine · restul săptămânii · mai târziu; cele trecute nefinalizate marcate
-- [ ] FAB „+” → dialog programare: client (din listă sau nou), tip, dată (`DatePicker`),
+- [x] Listă grupată: Azi · Mâine · restul săptămânii · mai târziu; cele trecute nefinalizate marcate
+- [x] FAB „+” → dialog programare: client (din listă sau nou), tip, dată (`DatePicker`),
       oră (`TimePicker`) sau „toată ziua”, durată (implicit din setări), notițe, lucrare legată (opțional)
-- [ ] Avertisment (nu blocaj) la suprapunere cu altă programare
-- [ ] Pe fiecare card: **Sună** (intent dial), **Navighează** (intent geo/maps),
+- [x] Avertisment (nu blocaj) la suprapunere cu altă programare
+- [x] Pe fiecare card: **Sună** (intent dial), **Navighează** (intent geo/maps),
       **Adaugă în calendarul telefonului** (`CalendarContract` INSERT — zero permisiuni),
       **Trimite confirmare** (SMS/WhatsApp cu text prestabilit: „Bună ziua, confirm vizita
       în data de … la ora …”), Finalizează / Anulează
-- [ ] Din lucrare → buton „Programează” (client și adresă pre-completate)
-- [ ] Din programare finalizată de tip Vizită/Ofertă → „Creează lucrare” (deschide Necesar
+- [x] Din lucrare → buton „Programează” (client și adresă pre-completate)
+- [x] Din programare de tip Vizită/Ofertă (indiferent de stare) → „Creează lucrare” (deschide Necesar
       cu datele clientului pregătite pentru salvare)
 
 **Setări — secțiune „Calendar”**
-- [ ] Arată calendarul (implicit da)
-- [ ] Durată implicită programare (60 min)
-- [ ] Textul mesajului de confirmare (editabil, cu {data} {ora} {nume})
+- [x] Arată calendarul (implicit da)
+- [x] Durată implicită programare (60 min)
+- [x] Textul mesajului de confirmare (editabil, cu {data} {ora} {nume})
 
 **Teste** (`V24Test.kt`)
-- [ ] suprapunere: două programări în aceeași oră, adiacente (nu se suprapun), toată ziua
-- [ ] grupare Azi/Mâine la trecerea de miezul nopții și la schimbarea lunii
-- [ ] text confirmare: înlocuirea corectă a {data} {ora} {nume}
-- [ ] JSON dus-întors + backup cu programări
+- [x] suprapunere: două programări în aceeași oră, adiacente (nu se suprapun), toată ziua
+- [x] grupare Azi/Mâine la trecerea de miezul nopții și la schimbarea lunii
+- [x] text confirmare: înlocuirea corectă a {data} {ora} {nume}
+- [x] JSON dus-întors + backup cu programări
 
 ---
 

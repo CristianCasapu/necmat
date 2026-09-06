@@ -23,6 +23,13 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
   prenume de sub etichete sau din zona MRZ, adresa de domiciliu de pe cartea
   veche; totul apare într-un dialog de confirmare, editabil, înainte de a
   completa formularul. Poza nu se păstrează
+- **Calendar de lucru și programări**: vizite, oferte, zile de execuție,
+  revizii, cu client (din listă), adresă, dată, oră sau „toată ziua”, durată,
+  notițe și legătură cu o lucrare; agendă grupată (Azi / Mâine / săptămâna
+  aceasta / mai târziu / trecute), avertisment la suprapuneri, stări
+  (programat / confirmat / finalizat / anulat); pe fiecare programare: sună,
+  confirmare prin SMS sau WhatsApp cu mesaj configurabil, navighează, adaugă
+  în calendarul telefonului, creează lucrare; din orice lucrare: „Programează”
 - **PDF profesional** pentru furnizor și client: antet cu dată și referință,
   carduri Solicitant (instalator) / Beneficiar (client), tabel
   (Nr. / Denumire / Cant. / UM / P.U. / Valoare) cu marca pe fiecare categorie,

@@ -30,7 +30,13 @@ data class AppSettings(
     /** Tab-ul „Clienți” din bara de jos. */
     val showClientsPage: Boolean = true,
     /** Păstrează CNP-ul în fișa clientului (doar local; niciodată în PDF). */
-    val storeCnp: Boolean = true
+    val storeCnp: Boolean = true,
+    /** Tab-ul „Calendar”; când e activ, Setările se mută în meniul ⋮. */
+    val showCalendar: Boolean = true,
+    /** Durata implicită a unei programări noi (minute). */
+    val defaultDurationMin: Int = 60,
+    /** Textul mesajului de confirmare trimis clientului (SMS / WhatsApp). */
+    val confirmTemplate: String = DEFAULT_CONFIRM_TEMPLATE
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -62,6 +68,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun prefillNextWork(c: Client?) {
         prefillClient = c
     }
+
+    /** Programările (vizite, oferte, execuție, revizii). */
+    var appointments by mutableStateOf(AppointmentsRepo.load(app))
+        private set
 
     var themeMode by mutableStateOf(loadTheme())
         private set
@@ -222,10 +232,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var undoState: Pair<List<Category>, List<Work>>? = null
 
     private var undoClients: List<Client>? = null
+    private var undoAppointments: List<Appointment>? = null
 
     private fun rememberUndo() {
         undoState = categories to works
         undoClients = clients
+        undoAppointments = appointments
     }
 
     /** Restaurează starea dinaintea ultimei ștergeri. */
@@ -237,9 +249,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         undoState = null
         undoClients?.let { clients = it; persistClients() }
         undoClients = null
+        undoAppointments?.let { appointments = it; persistAppointments() }
+        undoAppointments = null
         persist()
         persistWorks()
         return true
+    }
+
+    // ---- programări ----
+
+    private fun persistAppointments() {
+        val snapshot = appointments
+        viewModelScope.launch(Dispatchers.IO) {
+            AppointmentsRepo.save(getApplication(), snapshot)
+        }
+    }
+
+    /** Creează (id 0) sau actualizează o programare; întoarce varianta salvată. */
+    fun upsertAppointment(a: Appointment): Appointment {
+        val now = System.currentTimeMillis()
+        val exists = appointments.any { it.id == a.id }
+        val saved = if (exists) a else a.copy(id = if (a.id == 0L) newId() else a.id, createdAt = now)
+        appointments = if (exists) appointments.map { if (it.id == saved.id) saved else it }
+        else appointments + saved
+        persistAppointments()
+        AppLog.i(
+            "Calendar",
+            "${if (exists) "Programare actualizată" else "Programare nouă"}: ${saved.type.label} " +
+                "${formatDate(saved.start)} ${saved.timeLabel()} ${saved.clientName}"
+        )
+        return saved
+    }
+
+    fun setAppointmentStatus(id: Long, status: AppointmentStatus) {
+        appointments = appointments.map { if (it.id == id) it.copy(status = status) else it }
+        persistAppointments()
+        AppLog.i("Calendar", "Programarea $id → ${status.label}")
+    }
+
+    /** Șterge programarea; se poate anula din bară. */
+    fun deleteAppointment(id: Long) {
+        rememberUndo()
+        AppLog.i("Calendar", "Programare ștearsă: $id")
+        appointments = appointments.filter { it.id != id }
+        persistAppointments()
     }
 
     // ---- clienți ----
@@ -743,9 +796,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .put("ownedInPdf", settings.ownedInPdf)
         .put("showClientsPage", settings.showClientsPage)
         .put("storeCnp", settings.storeCnp)
+        .put("showCalendar", settings.showCalendar)
+        .put("defaultDurationMin", settings.defaultDurationMin)
+        .put("confirmTemplate", settings.confirmTemplate)
 
     fun backupJson(): String =
-        Repo.backupJson(categories, works, brands, labor, settingsToJson(), clients)
+        Repo.backupJson(categories, works, brands, labor, settingsToJson(), clients, appointments)
 
     /** Înlocuiește toate datele cu cele din backup. Întoarce false dacă fișierul e invalid. */
     fun restoreBackup(text: String): Boolean {
@@ -756,6 +812,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val (restoredClients, restoredWorks) = clientsFromWorks(parsed.works, parsed.clients, newId = { newId() })
         clients = restoredClients
         works = restoredWorks
+        appointments = parsed.appointments
         if (parsed.brands.isNotEmpty()) brands = parsed.brands
         parsed.labor?.let { labor = Repo.mergeLaborDefaults(it) }
         parsed.settings?.let { s ->
@@ -772,17 +829,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     showOwnedSection = s.optBoolean("showOwnedSection", settings.showOwnedSection),
                     ownedInPdf = s.optBoolean("ownedInPdf", settings.ownedInPdf),
                     showClientsPage = s.optBoolean("showClientsPage", settings.showClientsPage),
-                    storeCnp = s.optBoolean("storeCnp", settings.storeCnp)
+                    storeCnp = s.optBoolean("storeCnp", settings.storeCnp),
+                    showCalendar = s.optBoolean("showCalendar", settings.showCalendar),
+                    defaultDurationMin = s.optInt("defaultDurationMin", settings.defaultDurationMin),
+                    confirmTemplate = s.optString("confirmTemplate", settings.confirmTemplate)
                 )
             )
         }
         trimOwned()
         val cats = categories
         val lab = labor
+        val appts = appointments
         viewModelScope.launch(Dispatchers.IO) {
             Repo.save(getApplication(), cats)
             Repo.saveWorks(getApplication(), restoredWorks)
             ClientsRepo.save(getApplication(), restoredClients)
+            AppointmentsRepo.save(getApplication(), appts)
             if (parsed.brands.isNotEmpty()) Repo.saveBrands(getApplication(), parsed.brands)
             if (parsed.labor != null) Repo.saveLabor(getApplication(), lab)
         }
@@ -862,7 +924,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             showOwnedSection = p.getBoolean("owned_section", true),
             ownedInPdf = p.getBoolean("owned_pdf", true),
             showClientsPage = p.getBoolean("clients_page", true),
-            storeCnp = p.getBoolean("store_cnp", true)
+            storeCnp = p.getBoolean("store_cnp", true),
+            showCalendar = p.getBoolean("cal_show", true),
+            defaultDurationMin = p.getInt("cal_dur", 60),
+            confirmTemplate = p.getString("cal_tpl", DEFAULT_CONFIRM_TEMPLATE) ?: DEFAULT_CONFIRM_TEMPLATE
         )
     }
 
@@ -890,6 +955,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("owned_pdf", s.ownedInPdf)
             .putBoolean("clients_page", s.showClientsPage)
             .putBoolean("store_cnp", s.storeCnp)
+            .putBoolean("cal_show", s.showCalendar)
+            .putInt("cal_dur", s.defaultDurationMin)
+            .putString("cal_tpl", s.confirmTemplate)
             .apply()
         if (recheckOwned) trimOwned()
     }

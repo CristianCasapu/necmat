@@ -869,7 +869,8 @@ object Repo {
         brands: List<BrandEntry> = emptyList(),
         labor: LaborConfig? = null,
         settings: JSONObject? = null,
-        clients: List<Client> = emptyList()
+        clients: List<Client> = emptyList(),
+        appointments: List<Appointment> = emptyList()
     ): String {
         val cats = JSONArray()
         categories.forEach { cats.put(catToJson(it)) }
@@ -881,6 +882,7 @@ object Repo {
             .put("app", "NecMat").put("version", 4)
             .put("categories", cats).put("works", ws).put("brands", bs)
             .put("clients", ClientsRepo.listToJson(clients))
+            .put("appointments", AppointmentsRepo.listToJson(appointments))
         if (labor != null) o.put("labor", laborToJson(labor))
         if (settings != null) o.put("settings", settings)
         return o.toString(2)
@@ -893,7 +895,9 @@ object Repo {
         val labor: LaborConfig? = null,
         val settings: JSONObject? = null,
         /** Absent în backup-urile v3 → listă goală (clienții se refac din lucrări). */
-        val clients: List<Client> = emptyList()
+        val clients: List<Client> = emptyList(),
+        /** Programările (v1.24); absent în backup-urile mai vechi → listă goală. */
+        val appointments: List<Appointment> = emptyList()
     )
 
     /** Returnează datele din backup sau null dacă fișierul nu e valid. */
@@ -910,7 +914,8 @@ object Repo {
                 brands = (0 until bs.length()).map { brandFromJson(bs.getJSONObject(it)) },
                 labor = o.optJSONObject("labor")?.let { laborFromJson(it) },
                 settings = o.optJSONObject("settings"),
-                clients = ClientsRepo.listFromJson(o.optJSONArray("clients"))
+                clients = ClientsRepo.listFromJson(o.optJSONArray("clients")),
+                appointments = AppointmentsRepo.listFromJson(o.optJSONArray("appointments"))
             )
         }
     } catch (e: Exception) {

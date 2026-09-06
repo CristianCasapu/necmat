@@ -38,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -126,7 +127,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { MATERIALS, SUMMARY, WORKS, CLIENTS, SETTINGS }
+private enum class Screen { MATERIALS, SUMMARY, WORKS, CLIENTS, CALENDAR, SETTINGS }
 
 /** Generează PDF-ul unei lucrări, anunță salvarea în Descărcări și deschide partajarea. */
 private fun exportPdfAndShare(context: Context, vm: AppViewModel, work: Work) {
@@ -339,6 +340,11 @@ fun App(vm: AppViewModel) {
                         DropdownMenuItem(
                             text = { Text("Despliază toate categoriile") },
                             onClick = { menuOpen = false; vm.setAllCollapsed(false) })
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                            text = { Text("Setări") },
+                            onClick = { menuOpen = false; screen = Screen.SETTINGS })
                     }
                 }
             )
@@ -381,7 +387,20 @@ fun App(vm: AppViewModel) {
                     },
                     label = { Text("Clienți") }
                 )
-                NavigationBarItem(
+                if (vm.settings.showCalendar) {
+                    val todayCount = appointmentsOn(vm.appointments, toLocalDate(System.currentTimeMillis()))
+                        .count { it.isActive }
+                    NavigationBarItem(
+                        selected = screen == Screen.CALENDAR,
+                        onClick = { screen = Screen.CALENDAR },
+                        icon = {
+                            if (todayCount > 0) BadgedBox(badge = { Badge { Text("$todayCount") } }) {
+                                Icon(Icons.Default.DateRange, contentDescription = null)
+                            } else Icon(Icons.Default.DateRange, contentDescription = null)
+                        },
+                        label = { Text("Calendar") }
+                    )
+                } else NavigationBarItem(
                     selected = screen == Screen.SETTINGS,
                     onClick = { screen = Screen.SETTINGS },
                     icon = { Icon(Icons.Default.Settings, contentDescription = null) },
@@ -402,6 +421,11 @@ fun App(vm: AppViewModel) {
                 Screen.CLIENTS -> ClientsScreen(
                     vm,
                     onNewWork = { screen = Screen.MATERIALS },
+                    onDeleted = onDeleted
+                )
+                Screen.CALENDAR -> CalendarScreen(
+                    vm,
+                    onCreateWork = { screen = Screen.MATERIALS },
                     onDeleted = onDeleted
                 )
                 Screen.SETTINGS -> SettingsScreen(
@@ -1232,6 +1256,7 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
     var deleteWork by remember { mutableStateOf<Work?>(null) }
     var loadWork by remember { mutableStateOf<Work?>(null) }
     var laborQuoteFor by remember { mutableStateOf<Work?>(null) }
+    var scheduleFor by remember { mutableStateOf<Work?>(null) }
     val df = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
     // șabloanele sunt afișate primele
     val sortedWorks = vm.works.sortedByDescending { it.isTemplate }
@@ -1335,6 +1360,8 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
                     ) {
                         TextButton(onClick = { exportPdfAndShare(context, vm, work) }) { Text("PDF") }
                         TextButton(onClick = { laborQuoteFor = work }) { Text("Ofertă") }
+                        if (vm.settings.showCalendar)
+                            TextButton(onClick = { scheduleFor = work }) { Text("Programează") }
                         TextButton(onClick = { vm.toggleTemplate(work.id) }) {
                             Text(if (work.isTemplate) "Șablon ✓" else "Șablon")
                         }
@@ -1360,6 +1387,23 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
         item { Spacer(Modifier.height(24.dp)) }
     }
 
+    scheduleFor?.let { work ->
+        AppointmentDialog(
+            vm = vm,
+            initial = Appointment(
+                0L, work.name, suggestedStart(System.currentTimeMillis()), vm.settings.defaultDurationMin,
+                type = AppointmentType.EXECUTIE, clientId = work.clientId, clientName = work.client,
+                address = work.address, phone = work.phone, workId = work.id
+            ),
+            isNew = true,
+            onDismiss = { scheduleFor = null },
+            onSave = {
+                vm.upsertAppointment(it)
+                scheduleFor = null
+                Toast.makeText(context, "Programare salvată — vezi Calendar", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
     deleteWork?.let { work ->
         ConfirmDialog(
             title = "Ștergi lucrarea?",
@@ -1617,6 +1661,36 @@ private fun SettingsScreen(
             checked = s.storeCnp,
             onChange = { vm.saveSettings(s.copy(storeCnp = it)) }
         )
+
+        SettingsHeader("Calendar și programări")
+        SwitchRow(
+            title = "Pagina „Calendar”",
+            subtitle = "Tab în bara de jos; cât e activ, Setările se deschid din meniul ⋮ (dreapta-sus)",
+            checked = s.showCalendar,
+            onChange = { vm.saveSettings(s.copy(showCalendar = it)) }
+        )
+        OutlinedTextField(
+            value = if (s.defaultDurationMin == 0) "" else "${s.defaultDurationMin}",
+            onValueChange = { v ->
+                vm.saveSettings(s.copy(defaultDurationMin = v.filter { it.isDigit() }.take(4).toIntOrNull() ?: 0))
+            },
+            label = { Text("Durata implicită a unei programări (minute)") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = s.confirmTemplate,
+            onValueChange = { vm.saveSettings(s.copy(confirmTemplate = it)) },
+            label = { Text("Mesaj de confirmare către client (SMS / WhatsApp)") },
+            supportingText = { Text("Variabile: {nume} {tip} {data} {ora} {adresa} {instalator}") },
+            minLines = 2, maxLines = 5,
+            modifier = Modifier.fillMaxWidth()
+        )
+        TextButton(onClick = { vm.saveSettings(s.copy(confirmTemplate = DEFAULT_CONFIRM_TEMPLATE)) }) {
+            Text("Revino la mesajul implicit")
+        }
         if (vm.selfUpdateAvailable) SwitchRow(
             title = "Caută actualizări la pornire",
             subtitle = "Verifică automat GitHub la deschiderea aplicației",
@@ -2742,7 +2816,7 @@ private fun CountdownConfirmDialog(
 }
 
 @Composable
-private fun ConfirmDialog(
+internal fun ConfirmDialog(
     title: String,
     text: String,
     onDismiss: () -> Unit,
