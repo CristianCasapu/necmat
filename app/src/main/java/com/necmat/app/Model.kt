@@ -90,7 +90,9 @@ data class Work(
     val phone: String = "",
     val isTemplate: Boolean = false,
     /** Materiale pe care clientul le are deja — se scad din lista de cumpărături. */
-    val owned: List<OwnedMaterial> = emptyList()
+    val owned: List<OwnedMaterial> = emptyList(),
+    /** Legătura cu fișa clientului (v1.22); câmpurile text rămân pentru PDF și compatibilitate. */
+    val clientId: Long? = null
 ) {
     val totalTypes get() = categories.sumOf { it.materials.size }
     val totalPieces get() = categories.sumOf { c -> c.materials.sumOf { it.qty } }
@@ -570,6 +572,7 @@ object Repo {
             .put("client", w.client).put("address", w.address).put("phone", w.phone)
             .put("template", w.isTemplate)
             .put("owned", ownedToJson(w.owned))
+            .apply { w.clientId?.let { put("clientId", it) } }
     }
 
     private fun workFromJson(w: JSONObject): Work {
@@ -583,7 +586,8 @@ object Repo {
             address = w.optString("address", ""),
             phone = w.optString("phone", ""),
             isTemplate = w.optBoolean("template", false),
-            owned = ownedFromJson(w.optJSONArray("owned"))
+            owned = ownedFromJson(w.optJSONArray("owned")),
+            clientId = if (w.has("clientId") && !w.isNull("clientId")) w.getLong("clientId") else null
         )
     }
 
@@ -864,7 +868,8 @@ object Repo {
         works: List<Work>,
         brands: List<BrandEntry> = emptyList(),
         labor: LaborConfig? = null,
-        settings: JSONObject? = null
+        settings: JSONObject? = null,
+        clients: List<Client> = emptyList()
     ): String {
         val cats = JSONArray()
         categories.forEach { cats.put(catToJson(it)) }
@@ -873,8 +878,9 @@ object Repo {
         val bs = JSONArray()
         brands.forEach { bs.put(brandToJson(it)) }
         val o = JSONObject()
-            .put("app", "NecMat").put("version", 3)
+            .put("app", "NecMat").put("version", 4)
             .put("categories", cats).put("works", ws).put("brands", bs)
+            .put("clients", ClientsRepo.listToJson(clients))
         if (labor != null) o.put("labor", laborToJson(labor))
         if (settings != null) o.put("settings", settings)
         return o.toString(2)
@@ -885,7 +891,9 @@ object Repo {
         val works: List<Work>,
         val brands: List<BrandEntry>,
         val labor: LaborConfig? = null,
-        val settings: JSONObject? = null
+        val settings: JSONObject? = null,
+        /** Absent în backup-urile v3 → listă goală (clienții se refac din lucrări). */
+        val clients: List<Client> = emptyList()
     )
 
     /** Returnează datele din backup sau null dacă fișierul nu e valid. */
@@ -901,7 +909,8 @@ object Repo {
                 works = (0 until ws.length()).map { workFromJson(ws.getJSONObject(it)) },
                 brands = (0 until bs.length()).map { brandFromJson(bs.getJSONObject(it)) },
                 labor = o.optJSONObject("labor")?.let { laborFromJson(it) },
-                settings = o.optJSONObject("settings")
+                settings = o.optJSONObject("settings"),
+                clients = ClientsRepo.listFromJson(o.optJSONArray("clients"))
             )
         }
     } catch (e: Exception) {

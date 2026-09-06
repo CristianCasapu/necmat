@@ -1,6 +1,6 @@
 # Plan funcții noi: Materiale existente la client · Clienți · Scanare buletin · Calendar și programări
 
-Stare: **în lucru** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor).
+Stare: **în lucru** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22.
 Fiecare etapă = o versiune publicată separat (teste → build → bump → commit → release),
 ca să poți folosi și testa pe teren fiecare bucată înainte de următoarea.
 
@@ -116,57 +116,58 @@ cu 4 module planificate, clientul are deja 2 module → PDF: 2 module, 1 ramă s
 
 ---
 
-## Etapa 0 — Clienți: entitate + pagină de administrare (v1.22)
+## Etapa 0 — Clienți: entitate + pagină de administrare (v1.22) — ✅ livrată 2026-09-06
 
 Fundația pentru scanare, programări și agenda telefonului. Fără ea, fiecare funcție ar duplica datele clientului.
 
 **Model** (`Clients.kt`)
-- [ ] `data class Client(id, name, phone, address, email = "", cnp = "", notes = "", createdAt, updatedAt)`
+- [x] `data class Client(id, name, phone, address, email = "", cnp = "", notes = "", createdAt, updatedAt)`
       — `name` = „Nume Prenume” într-un singur câmp (ca acum în lucrare), `email` și `cnp` opționale
-- [ ] Fișier `necmat_clients.json` (load/save în `Repo`, același stil ca lucrările)
-- [ ] `Work` primește `clientId: Long? = null`; câmpurile text vechi rămân (compatibilitate + PDF).
+- [x] Fișier `necmat_clients.json` (load/save în `Repo`, același stil ca lucrările)
+- [x] `Work` primește `clientId: Long? = null`; câmpurile text vechi rămân (compatibilitate + PDF).
       **CNP-ul și e-mailul nu se copiază în `Work`** — PDF-ul nu are de unde să le ia
-- [ ] Migrare aditivă la pornire: din lucrările existente se extrag clienți unici
+- [x] Migrare aditivă la pornire: din lucrările existente se extrag clienți unici
       (cheie: telefon normalizat — doar cifre, fără prefixul +4; dacă lipsește, nume + adresă), lucrările primesc `clientId`
-- [ ] Backup **v4**: include `clients` (și, din etapa 1, `appointments`); backup v3 se restaurează în continuare
-- [ ] Funcții pure testabile: `normalizePhone`, `findDuplicate(client, list)`, `clientsFromWorks(works)`, `isValidCnp`, `isValidEmail`
+- [x] Backup **v4**: include `clients` (și, din etapa 1, `appointments`); backup v3 se restaurează în continuare
+- [x] Funcții pure testabile: `normalizePhone`, `findDuplicate(client, list)`, `clientsFromWorks(works)`, `isValidCnp`, `isValidEmail`
 
 **Pagina „Clienți”** (`ClientsScreen.kt`, tab nou în bara de jos)
-- [ ] Listă: nume, telefon, localitatea din adresă, număr de lucrări; sortare alfabetică; căutare după nume / telefon / e-mail
-- [ ] FAB „+” → **același formular** ca datele clientului din `WorkDetailsDialog`, extras într-un `ClientForm`
+- [x] Listă: nume, telefon, localitatea din adresă, număr de lucrări; sortare alfabetică; căutare după nume / telefon / e-mail
+- [x] FAB „+” → **același formular** ca datele clientului din `WorkDetailsDialog`, extras într-un `ClientForm`
       refolosibil: nume, telefon (cu butonul existent „din agenda de contacte”), adresă (cu butonul existent
       „din locație”), e-mail (opțional, validat ca formă), CNP (opțional, validat cu cifra de control), notițe
-- [ ] Editare: apasă pe client → fișă cu toate datele; buton „Editează” deschide același `ClientForm`
-- [ ] Ștergere: din fișă, cu confirmare; lucrările clientului rămân (își păstrează textul, `clientId` devine null);
+- [x] Editare: apasă pe client → fișă cu toate datele; buton „Editează” deschide același `ClientForm`
+- [x] Ștergere: din fișă, cu confirmare; lucrările clientului rămân (își păstrează textul, `clientId` devine null);
       undo prin snackbar, ca la lucrări
-- [ ] Avertisment la salvare dacă există deja un client cu același telefon („Există deja Ionescu Maria cu acest
+- [x] Avertisment la salvare dacă există deja un client cu același telefon („Există deja Ionescu Maria cu acest
       număr — deschide-l / salvează oricum”)
-- [ ] **Fișa clientului** cuprinde: date de contact cu acțiuni rapide (Sună · SMS · WhatsApp · E-mail · Navighează),
+- [x] **Fișa clientului** cuprinde: date de contact cu acțiuni rapide (Sună · SMS · WhatsApp · E-mail · Navighează),
       istoricul lucrărilor (apasă → deschide lucrarea), iar din etapa 1 și programările
-- [ ] Buton **„Salvează în agenda telefonului”**: intent `ContactsContract.Intents.Insert` pre-completat cu
+- [x] Buton **„Salvează în agenda telefonului”**: intent `ContactsContract.Intents.Insert` pre-completat cu
       nume, telefon, e-mail, adresă poștală și notă „Client NecMat” — se deschide aplicația Contacte, tu confirmi;
       **nu cere permisiunea de contacte** (scrierea o face aplicația de Contacte). CNP-ul nu se trimite în agendă
-- [ ] Buton „Lucrare nouă pentru acest client” → deschide Necesar cu datele pregătite pentru salvare
+- [x] Buton „Lucrare nouă pentru acest client” → deschide Necesar cu datele pregătite pentru salvare
 
 **Integrare cu lucrările** (`WorkDetailsDialog`)
-- [ ] Datele clientului din dialog folosesc același `ClientForm`
-- [ ] La scrierea numelui apar sugestii din clienții existenți; alegerea completează telefon + adresă și setează `clientId`
-- [ ] Adresa lucrării pornește de la adresa clientului (domiciliul), dar rămâne editabilă separat
+- [x] Datele clientului din dialog folosesc același `ClientForm`
+- [x] La scrierea numelui apar sugestii din clienții existenți; alegerea completează telefon + adresă și setează `clientId`
+- [x] Adresa lucrării pornește de la adresa clientului (domiciliul), dar rămâne editabilă separat
       (lucrarea poate fi la altă adresă decât domiciliul)
-- [ ] La salvarea lucrării, un client nou (fără `clientId`) se creează automat în listă; unul existent se
-      actualizează doar dacă i-ai schimbat telefonul/adresa și confirmi
+- [x] La salvarea lucrării, un client nou (fără `clientId`) se creează automat în listă; unul existent
+      (același telefon / nume + adresă) e legat automat, fără să-i modifice fișa (confirmarea la modificare
+      nu a fost necesară: fișa se editează din pagina Clienți)
 
 **Setări**
-- [ ] „Arată pagina Clienți” (implicit pornit), „Salvează CNP-ul” (implicit pornit)
+- [x] „Arată pagina Clienți” (implicit pornit), „Salvează CNP-ul” (implicit pornit)
 
 **Teste** (`V22Test.kt`)
-- [ ] extragere clienți din lucrări: dedupe pe telefon (`0722…` = `+40722…`), telefon lipsă, nume diferit ca literă mare/mică
-- [ ] validare CNP: cifra de control, lungime, an/lună/zi imposibile, CNP-uri fictive valide și invalide
-- [ ] validare e-mail: forme acceptate / respinse
-- [ ] JSON dus-întors client (cu și fără e-mail / CNP) și lucrare cu `clientId`
-- [ ] backup v3 → v4: se restaurează, clienții apar după migrare
-- [ ] ștergerea unui client lasă lucrările intacte, cu `clientId = null`
-- [ ] `preparePdfWork` și `summaryText` nu conțin niciodată CNP sau e-mail
+- [x] extragere clienți din lucrări: dedupe pe telefon (`0722…` = `+40722…`), telefon lipsă, nume diferit ca literă mare/mică
+- [x] validare CNP: cifra de control, lungime, an/lună/zi imposibile, CNP-uri fictive valide și invalide
+- [x] validare e-mail: forme acceptate / respinse
+- [x] JSON dus-întors client (cu și fără e-mail / CNP) și lucrare cu `clientId`
+- [x] backup v3 → v4: se restaurează, clienții apar după migrare
+- [x] ștergerea unui client lasă lucrările intacte, cu `clientId = null`
+- [x] `preparePdfWork` și `summaryText` nu conțin niciodată CNP sau e-mail
 
 ---
 

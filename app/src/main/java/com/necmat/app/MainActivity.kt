@@ -126,7 +126,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { MATERIALS, SUMMARY, WORKS, SETTINGS }
+private enum class Screen { MATERIALS, SUMMARY, WORKS, CLIENTS, SETTINGS }
 
 /** Generează PDF-ul unei lucrări, anunță salvarea în Descărcări și deschide partajarea. */
 private fun exportPdfAndShare(context: Context, vm: AppViewModel, work: Work) {
@@ -371,6 +371,16 @@ fun App(vm: AppViewModel) {
                     },
                     label = { Text("Lucrări") }
                 )
+                if (vm.settings.showClientsPage) NavigationBarItem(
+                    selected = screen == Screen.CLIENTS,
+                    onClick = { screen = Screen.CLIENTS },
+                    icon = {
+                        if (vm.clients.isNotEmpty()) BadgedBox(badge = { Badge { Text("${vm.clients.size}") } }) {
+                            Icon(Icons.Default.Person, contentDescription = null)
+                        } else Icon(Icons.Default.Person, contentDescription = null)
+                    },
+                    label = { Text("Clienți") }
+                )
                 NavigationBarItem(
                     selected = screen == Screen.SETTINGS,
                     onClick = { screen = Screen.SETTINGS },
@@ -387,6 +397,11 @@ fun App(vm: AppViewModel) {
                 Screen.WORKS -> WorksScreen(
                     vm,
                     onLoaded = { screen = Screen.MATERIALS },
+                    onDeleted = onDeleted
+                )
+                Screen.CLIENTS -> ClientsScreen(
+                    vm,
+                    onNewWork = { screen = Screen.MATERIALS },
                     onDeleted = onDeleted
                 )
                 Screen.SETTINGS -> SettingsScreen(
@@ -997,15 +1012,16 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
     if (showSave) WorkDetailsDialog(
         title = "Salvează lucrarea",
         confirmLabel = "Salvează",
+        vm = vm,
         works = vm.works,
         onDismiss = { showSave = false },
-        onConfirm = { name, client, address, phone, overwriteId ->
+        onConfirm = { d ->
             showSave = false
-            if (vm.saveWork(name, client, address, phone, overwriteId)) {
+            if (vm.saveWork(d.name, d.client, d.address, d.phone, d.overwriteId, d.clientId)) {
                 Toast.makeText(
                     context,
-                    if (overwriteId != null) "Lucrare actualizată: $name"
-                    else "Lucrare salvată: $name",
+                    if (d.overwriteId != null) "Lucrare actualizată: ${d.name}"
+                    else "Lucrare salvată: ${d.name}",
                     Toast.LENGTH_SHORT
                 ).show()
                 onSaved()
@@ -1015,19 +1031,21 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
     if (showPdfName) WorkDetailsDialog(
         title = "Detalii pentru PDF",
         confirmLabel = "Generează PDF",
+        vm = vm,
         onDismiss = { showPdfName = false },
-        onConfirm = { name, client, address, phone, _ ->
+        onConfirm = { d ->
             showPdfName = false
-            exportPdfAndShare(context, vm, vm.snapshot(name, client, address, phone))
+            exportPdfAndShare(context, vm, vm.snapshot(d.name, d.client, d.address, d.phone, d.clientId))
         }
     )
     if (showLaborName) WorkDetailsDialog(
         title = "Ofertă manoperă — detalii",
         confirmLabel = "Continuă",
+        vm = vm,
         onDismiss = { showLaborName = false },
-        onConfirm = { name, client, address, phone, _ ->
+        onConfirm = { d ->
             showLaborName = false
-            laborWork = vm.snapshot(name, client, address, phone)
+            laborWork = vm.snapshot(d.name, d.client, d.address, d.phone, d.clientId)
         }
     )
     laborWork?.let { work ->
@@ -1035,29 +1053,40 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
     }
 }
 
+/** Datele introduse în formularul de lucrare (salvare / PDF / ofertă). */
+internal data class WorkDetails(
+    val name: String,
+    val client: String,
+    val address: String,
+    val phone: String,
+    val overwriteId: Long?,
+    val clientId: Long?
+)
+
 @Composable
 private fun WorkDetailsDialog(
     title: String,
     confirmLabel: String,
+    vm: AppViewModel,
     works: List<Work> = emptyList(),
     onDismiss: () -> Unit,
-    onConfirm: (String, String, String, String, Long?) -> Unit
+    onConfirm: (WorkDetails) -> Unit
 ) {
     val initialName = remember {
         "Necesar materiale " +
             SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
     }
     var name by remember { mutableStateOf(initialName) }
-    var client by remember { mutableStateOf("") }
-    var address by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
+    // „Lucrare nouă pentru acest client” (pagina Clienți) pre-completează datele clientului
+    val prefill = remember { vm.prefillClient }
+    LaunchedEffect(Unit) { vm.prefillNextWork(null) }
+    val form = rememberClientFormState(prefill)
     var overwriteId by remember { mutableStateOf<Long?>(null) }
     var filter by remember { mutableStateOf("") }
     var confirmExit by remember { mutableStateOf(false) }
 
     // protecție la ieșire: dacă s-a completat ceva, cerem confirmare
-    val dirty = name != initialName || client.isNotBlank() ||
-        address.isNotBlank() || phone.isNotBlank() || overwriteId != null
+    val dirty = name != initialName || form.differsFrom(prefill) || overwriteId != null
     val requestDismiss = { if (dirty) confirmExit = true else onDismiss() }
 
     if (confirmExit) {
@@ -1079,72 +1108,14 @@ private fun WorkDetailsDialog(
         )
     }
 
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var locBusy by remember { mutableStateOf(false) }
-
-    // adresa din locația curentă, prin OpenStreetMap
-    fun fetchAddress() {
-        if (locBusy) return
-        locBusy = true
-        scope.launch {
-            val loc = LocationHelper.currentLocation(context)
-            val addr = loc?.let { LocationHelper.reverseGeocode(it.latitude, it.longitude) }
-            locBusy = false
-            when {
-                addr != null -> address = addr
-                loc == null -> Toast.makeText(
-                    context, "Locația nu a putut fi determinată — pornește GPS-ul",
-                    Toast.LENGTH_LONG
-                ).show()
-                else -> Toast.makeText(
-                    context, "Nu am găsit o adresă pentru locația curentă",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }
-    }
-
-    val locPermLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { res ->
-        if (res.values.any { it }) fetchAddress()
-        else Toast.makeText(
-            context, "Fără permisiunea de locație nu pot detecta adresa",
-            Toast.LENGTH_LONG
-        ).show()
-    }
-
-    // numărul de telefon din agenda de contacte
-    val contactLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
-        try {
-            context.contentResolver.query(
-                uri,
-                arrayOf(
-                    android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
-                    android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
-                ),
-                null, null, null
-            )?.use { c ->
-                if (c.moveToFirst()) {
-                    c.getString(0)?.let { phone = it }
-                    val displayName = c.getString(1)
-                    if (client.isBlank() && !displayName.isNullOrBlank()) client = displayName
-                }
-            }
-        } catch (e: Exception) {
-            Toast.makeText(context, "Nu am putut citi contactul", Toast.LENGTH_LONG).show()
-        }
-    }
-
     AlertDialog(
         onDismissRequest = { requestDismiss() },
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 if (works.isNotEmpty()) {
                     Text(
                         "Salvează ca:",
@@ -1184,9 +1155,7 @@ private fun WorkDetailsDialog(
                             val select = {
                                 overwriteId = w.id
                                 name = w.name
-                                client = w.client
-                                address = w.address
-                                phone = w.phone
+                                form.setFromWork(w)
                             }
                             Row(
                                 Modifier
@@ -1231,67 +1200,21 @@ private fun WorkDetailsDialog(
                     label = { Text("Nume lucrare (ex: Casa familia Ciuvică)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    value = client, onValueChange = { client = it },
-                    label = { Text("Client — opțional") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = address, onValueChange = { address = it },
-                    label = { Text("Adresă — opțional") },
-                    singleLine = true,
-                    trailingIcon = {
-                        if (locBusy) CircularProgressIndicator(
-                            Modifier.size(18.dp), strokeWidth = 2.dp
-                        ) else IconButton(onClick = {
-                            if (LocationHelper.hasPermission(context)) fetchAddress()
-                            else locPermLauncher.launch(LocationHelper.PERMISSIONS)
-                        }) {
-                            Icon(
-                                Icons.Default.LocationOn,
-                                contentDescription = "Detectează adresa din locație",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = phone, onValueChange = { phone = it },
-                    label = { Text("Telefon — opțional") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            try {
-                                contactLauncher.launch(
-                                    Intent(Intent.ACTION_PICK).apply {
-                                        type = android.provider.ContactsContract
-                                            .CommonDataKinds.Phone.CONTENT_TYPE
-                                    }
-                                )
-                            } catch (e: Exception) {
-                                Toast.makeText(
-                                    context, "Agenda de contacte nu e disponibilă",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        }) {
-                            Icon(
-                                Icons.Default.Person,
-                                contentDescription = "Alege din contacte",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
+                // același formular de client ca în pagina Clienți (fără e-mail / CNP / notițe)
+                ClientFields(
+                    form = form,
+                    clients = vm.clients,
+                    storeCnp = vm.settings.storeCnp,
+                    showExtra = false
                 )
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (name.isNotBlank()) onConfirm(name, client, address, phone, overwriteId)
+                    if (name.isNotBlank()) onConfirm(
+                        WorkDetails(name, form.name, form.address, form.phone, overwriteId, form.clientId)
+                    )
                 },
                 enabled = name.isNotBlank()
             ) { Text(confirmLabel) }
@@ -1678,6 +1601,19 @@ private fun SettingsScreen(
             subtitle = "După salvarea lucrării, cantitățile revin la 0 și treci la Lucrări",
             checked = s.clearAfterSave,
             onChange = { vm.saveSettings(s.copy(clearAfterSave = it)) }
+        )
+        SwitchRow(
+            title = "Pagina „Clienți”",
+            subtitle = "Tab în bara de jos cu fișele clienților: adăugare, editare, istoric lucrări, agendă",
+            checked = s.showClientsPage,
+            onChange = { vm.saveSettings(s.copy(showClientsPage = it)) }
+        )
+        SwitchRow(
+            title = "Salvează CNP-ul clienților",
+            subtitle = "Doar local, în fișa clientului; nu intră niciodată în PDF. " +
+                "Dezactivat: CNP-urile existente se șterg",
+            checked = s.storeCnp,
+            onChange = { vm.saveSettings(s.copy(storeCnp = it)) }
         )
         if (vm.selfUpdateAvailable) SwitchRow(
             title = "Caută actualizări la pornire",

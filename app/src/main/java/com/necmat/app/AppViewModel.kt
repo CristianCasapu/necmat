@@ -26,7 +26,11 @@ data class AppSettings(
     /** Secțiunea „Materiale existente la client” din pagina Necesar. */
     val showOwnedSection: Boolean = true,
     /** Listează în PDF / text materialele puse la dispoziție de client. */
-    val ownedInPdf: Boolean = true
+    val ownedInPdf: Boolean = true,
+    /** Tab-ul „Clienți” din bara de jos. */
+    val showClientsPage: Boolean = true,
+    /** Păstrează CNP-ul în fișa clientului (doar local; niciodată în PDF). */
+    val storeCnp: Boolean = true
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -46,6 +50,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Materialele pe care clientul le are deja, pentru necesarul din editor. */
     var owned by mutableStateOf(Repo.loadOwned(app))
         private set
+
+    /** Clienții — entitate separată; e-mailul și CNP-ul rămân doar aici. */
+    var clients by mutableStateOf(ClientsRepo.load(app))
+        private set
+
+    /** Client pre-completat pentru următorul formular de lucrare („Lucrare nouă pentru acest client”). */
+    var prefillClient by mutableStateOf<Client?>(null)
+        private set
+
+    fun prefillNextWork(c: Client?) {
+        prefillClient = c
+    }
 
     var themeMode by mutableStateOf(loadTheme())
         private set
@@ -168,6 +184,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             prefs().edit().putInt("last_vc", BuildConfig.VERSION_CODE).apply()
             AppLog.i("Migrari", "Auto-reparare rulată pentru versiunea ${BuildConfig.VERSION_CODE}")
         }
+        // v1.22: clienții devin entitate — se extrag o singură dată din lucrările existente
+        if (!prefs().getBoolean("migr_clients", false)) {
+            val (cl, ws) = clientsFromWorks(works, clients, newId = { newId() })
+            clients = cl
+            works = ws
+            persistClients()
+            persistWorks()
+            prefs().edit().putBoolean("migr_clients", true).apply()
+            AppLog.i("Clienti", "Clienți extrași din lucrări: ${cl.size}")
+        }
         // reparare id-uri duplicate (generatorul vechi putea produce coliziuni)
         val deduped = Repo.fixDuplicateIds(categories) { newId() }
         if (deduped != categories) {
@@ -195,8 +221,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var undoState: Pair<List<Category>, List<Work>>? = null
 
+    private var undoClients: List<Client>? = null
+
     private fun rememberUndo() {
         undoState = categories to works
+        undoClients = clients
     }
 
     /** Restaurează starea dinaintea ultimei ștergeri. */
@@ -206,9 +235,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         categories = s.first
         works = s.second
         undoState = null
+        undoClients?.let { clients = it; persistClients() }
+        undoClients = null
         persist()
         persistWorks()
         return true
+    }
+
+    // ---- clienți ----
+
+    private fun persistClients() {
+        val snapshot = clients
+        viewModelScope.launch(Dispatchers.IO) {
+            ClientsRepo.save(getApplication(), snapshot)
+        }
+    }
+
+    /** Creează (id 0) sau actualizează un client; întoarce varianta salvată. */
+    fun upsertClient(c: Client): Client {
+        val now = System.currentTimeMillis()
+        val clean = c.copy(
+            name = c.name.trim(), phone = c.phone.trim(), address = c.address.trim(),
+            email = c.email.trim(), cnp = if (settings.storeCnp) c.cnp.trim() else "",
+            notes = c.notes.trim(), updatedAt = now
+        )
+        val exists = clients.any { it.id == clean.id }
+        val saved = if (exists) clean
+        else clean.copy(id = if (clean.id == 0L) newId() else clean.id, createdAt = now)
+        clients = if (exists) clients.map { if (it.id == saved.id) saved else it } else clients + saved
+        persistClients()
+        AppLog.i("Clienti", if (exists) "Client actualizat: ${saved.name}" else "Client nou: ${saved.name}")
+        return saved
+    }
+
+    /** Șterge clientul; lucrările lui rămân (doar legătura dispare). Se poate anula. */
+    fun deleteClient(clientId: Long) {
+        rememberUndo()
+        AppLog.i("Clienti", "Client șters: ${clients.firstOrNull { it.id == clientId }?.name}")
+        clients = clients.filter { it.id != clientId }
+        works = unlinkClient(works, clientId)
+        persistClients()
+        persistWorks()
+    }
+
+    /**
+     * Id-ul clientului pentru o lucrare: cel ales în formular, altfel un client
+     * existent cu același telefon / nume + adresă, altfel unul nou din datele lucrării.
+     */
+    private fun resolveClientId(client: String, phone: String, address: String, clientId: Long?): Long? {
+        if (clientId != null && clients.any { it.id == clientId }) return clientId
+        if (client.isBlank() && phone.isBlank()) return null
+        val probe = Client(0L, client.trim(), phone.trim(), address.trim())
+        findDuplicateClient(probe, clients)?.let { return it.id }
+        return upsertClient(probe.copy(name = probe.name.ifBlank { "Client fără nume" })).id
     }
 
     private fun persist() {
@@ -449,7 +528,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         name: String,
         client: String = "",
         address: String = "",
-        phone: String = ""
+        phone: String = "",
+        clientId: Long? = null
     ): Work = Work(
         id = newId(),
         name = name.trim(),
@@ -460,7 +540,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         client = client.trim(),
         address = address.trim(),
         phone = phone.trim(),
-        owned = owned
+        owned = owned,
+        clientId = clientId
     )
 
     /**
@@ -472,9 +553,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         client: String,
         address: String,
         phone: String,
-        overwriteId: Long? = null
+        overwriteId: Long? = null,
+        clientId: Long? = null
     ): Boolean {
-        val w = snapshot(name, client, address, phone)
+        val cid = resolveClientId(client, phone, address, clientId)
+        val w = snapshot(name, client, address, phone, cid)
         if (w.categories.isEmpty()) return false
         works = replaceWork(works, w, overwriteId)
         persistWorks()
@@ -645,16 +728,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .put("materialPrices", settings.materialPrices)
         .put("showOwnedSection", settings.showOwnedSection)
         .put("ownedInPdf", settings.ownedInPdf)
+        .put("showClientsPage", settings.showClientsPage)
+        .put("storeCnp", settings.storeCnp)
 
     fun backupJson(): String =
-        Repo.backupJson(categories, works, brands, labor, settingsToJson())
+        Repo.backupJson(categories, works, brands, labor, settingsToJson(), clients)
 
     /** Înlocuiește toate datele cu cele din backup. Întoarce false dacă fișierul e invalid. */
     fun restoreBackup(text: String): Boolean {
         val parsed = Repo.parseBackup(text) ?: return false
         // backupurile vechi primesc automat materialele adăugate între timp
         categories = Repo.applyAllMigrations(parsed.categories) { newId() }
-        works = parsed.works
+        // backup v3 fără clienți: îi refacem din lucrări; v4: îi completăm dacă lipsesc
+        val (restoredClients, restoredWorks) = clientsFromWorks(parsed.works, parsed.clients, newId = { newId() })
+        clients = restoredClients
+        works = restoredWorks
         if (parsed.brands.isNotEmpty()) brands = parsed.brands
         parsed.labor?.let { labor = Repo.mergeLaborDefaults(it) }
         parsed.settings?.let { s ->
@@ -669,7 +757,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     detailExpensesInOffer = s.optBoolean("detailExpensesInOffer", settings.detailExpensesInOffer),
                     materialPrices = s.optBoolean("materialPrices", settings.materialPrices),
                     showOwnedSection = s.optBoolean("showOwnedSection", settings.showOwnedSection),
-                    ownedInPdf = s.optBoolean("ownedInPdf", settings.ownedInPdf)
+                    ownedInPdf = s.optBoolean("ownedInPdf", settings.ownedInPdf),
+                    showClientsPage = s.optBoolean("showClientsPage", settings.showClientsPage),
+                    storeCnp = s.optBoolean("storeCnp", settings.storeCnp)
                 )
             )
         }
@@ -678,7 +768,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val lab = labor
         viewModelScope.launch(Dispatchers.IO) {
             Repo.save(getApplication(), cats)
-            Repo.saveWorks(getApplication(), parsed.works)
+            Repo.saveWorks(getApplication(), restoredWorks)
+            ClientsRepo.save(getApplication(), restoredClients)
             if (parsed.brands.isNotEmpty()) Repo.saveBrands(getApplication(), parsed.brands)
             if (parsed.labor != null) Repo.saveLabor(getApplication(), lab)
         }
@@ -756,13 +847,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             detailExpensesInOffer = p.getBoolean("offer_detail", true),
             materialPrices = p.getBoolean("mat_prices", false),
             showOwnedSection = p.getBoolean("owned_section", true),
-            ownedInPdf = p.getBoolean("owned_pdf", true)
+            ownedInPdf = p.getBoolean("owned_pdf", true),
+            showClientsPage = p.getBoolean("clients_page", true),
+            storeCnp = p.getBoolean("store_cnp", true)
         )
     }
 
     fun saveSettings(s: AppSettings) {
         val recheckOwned = s.autoAccessories != settings.autoAccessories ||
             s.includeBoxesInPdf != settings.includeBoxesInPdf
+        // CNP-ul dezactivat = șters imediat din toate fișele (nu doar ascuns)
+        if (!s.storeCnp && settings.storeCnp && clients.any { it.cnp.isNotBlank() }) {
+            clients = clients.map { it.copy(cnp = "") }
+            persistClients()
+            AppLog.i("Clienti", "CNP-urile au fost șterse din fișele clienților (setare dezactivată)")
+        }
         settings = s
         prefs().edit()
             .putString("inst_name", s.installerName)
@@ -776,6 +875,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("mat_prices", s.materialPrices)
             .putBoolean("owned_section", s.showOwnedSection)
             .putBoolean("owned_pdf", s.ownedInPdf)
+            .putBoolean("clients_page", s.showClientsPage)
+            .putBoolean("store_cnp", s.storeCnp)
             .apply()
         if (recheckOwned) trimOwned()
     }

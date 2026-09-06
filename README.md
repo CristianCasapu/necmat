@@ -12,6 +12,12 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
 - Prețuri opționale per material, cu valoare totală calculată
 - **Lucrări salvate** cu nume, dată și date client (client / adresă / telefon),
   cu duplicare și reîncărcare în editor
+- **Clienți**: pagină proprie cu căutare, adăugare, editare, ștergere (cu
+  anulare), e-mail și CNP opționale (CNP doar local, mascat, niciodată în PDF),
+  fișă cu acțiuni rapide (sună / SMS / WhatsApp / e-mail / hartă), istoricul
+  lucrărilor, „Lucrare nouă pentru acest client” și „Salvează în agenda
+  telefonului”; același formular e folosit și la salvarea lucrării, cu sugestii
+  din clienții existenți
 - **PDF profesional** pentru furnizor și client: antet cu dată și referință,
   carduri Solicitant (instalator) / Beneficiar (client), tabel
   (Nr. / Denumire / Cant. / UM / P.U. / Valoare) cu marca pe fiecare categorie,
