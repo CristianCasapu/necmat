@@ -206,6 +206,51 @@ fun ClientFields(
     var captureUri by remember { mutableStateOf<Uri?>(null) }
     var liveScan by remember { mutableStateOf(false) }
 
+    /** Imaginea decupată de scanerul de documente → citire pe zone. */
+    fun runCardScan(uri: Uri) {
+        if (scanBusy) return
+        scanBusy = true
+        scope.launch {
+            val scan = try {
+                IdScanner.scanCard(context, uri)
+            } catch (e: Exception) {
+                AppLog.e("Scan", "Eroare la citirea actului decupat", e)
+                IdScanner.Scan(emptyList(), null)
+            }
+            scanBusy = false
+            if (scan.lines.isEmpty()) {
+                Toast.makeText(context, "Nu am putut citi actul — încearcă din nou, cu mai multă lumină", Toast.LENGTH_LONG).show()
+            } else {
+                scanResult = scan.result
+                scanLines = scan.lines
+                scanThumb = scan.thumbnail
+            }
+        }
+    }
+
+    val docScanLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { res ->
+        if (res.resultCode == android.app.Activity.RESULT_OK) {
+            val uri = IdDocScanner.resultUri(res.data)
+            if (uri != null) runCardScan(uri)
+            else Toast.makeText(context, "Scanarea nu a produs nicio imagine", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun startDocScan() {
+        val activity = context.findActivity()
+        if (activity == null || !IdDocScanner.isAvailable(context)) {
+            Toast.makeText(context, "Scanerul Google nu e disponibil pe acest telefon — folosesc camera live", Toast.LENGTH_SHORT).show()
+            liveScan = true
+            return
+        }
+        IdDocScanner.start(activity, docScanLauncher) {
+            Toast.makeText(context, "Scanerul nu a pornit — folosesc camera live", Toast.LENGTH_SHORT).show()
+            liveScan = true
+        }
+    }
+
     if (liveScan) IdCameraScanDialog(
         onDismiss = { liveScan = false },
         onScanned = { result, lines, frame ->
@@ -269,11 +314,17 @@ fun ClientFields(
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(
-            onClick = { liveScan = true },
+            onClick = { startDocScan() },
             enabled = !scanBusy,
             modifier = Modifier.fillMaxWidth()
-        ) { Text("📷 Scanează buletinul cu camera (în timp real)") }
+        ) { Text("📷 Scanează buletinul (detectează și îndreaptă actul)") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(
+                onClick = { liveScan = true },
+                enabled = !scanBusy,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.weight(1f)
+            ) { Text("Cameră live", maxLines = 1, overflow = TextOverflow.Ellipsis) }
             OutlinedButton(
                 onClick = {
                     try {
@@ -287,7 +338,7 @@ fun ClientFields(
                 enabled = !scanBusy,
                 contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier.weight(1f)
-            ) { Text("Poză cu aplicația foto", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            ) { Text("Poză", maxLines = 1, overflow = TextOverflow.Ellipsis) }
             OutlinedButton(
                 onClick = {
                     imageLauncher.launch(
@@ -297,7 +348,7 @@ fun ClientFields(
                 enabled = !scanBusy,
                 contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier.weight(1f)
-            ) { Text("🖼 Din imagine", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            ) { Text("Din imagine", maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         if (scanBusy) Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)

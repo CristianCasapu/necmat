@@ -14,6 +14,8 @@ import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
@@ -210,6 +212,16 @@ fun IdCameraScanDialog(
                         val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
                         val analysis = ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .setResolutionSelector(
+                                ResolutionSelector.Builder()
+                                    .setResolutionStrategy(
+                                        ResolutionStrategy(
+                                            android.util.Size(1920, 1440),
+                                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                                        )
+                                    )
+                                    .build()
+                            )
                             .build()
                         var lastTs = 0L
                         analysis.setAnalyzer(executor) { proxy ->
@@ -221,12 +233,32 @@ fun IdCameraScanDialog(
                             }
                             lastTs = now
                             val rot = proxy.imageInfo.rotationDegrees
-                            val input = InputImage.fromMediaImage(media, rot)
                             val imgW = if (rot == 90 || rot == 270) proxy.height else proxy.width
                             val imgH = if (rot == 90 || rot == 270) proxy.width else proxy.height
+                            // decupăm cadrul la chenarul-ghid (cu margine): mai puțin text de fundal,
+                            // rezoluție efectivă mai mare pe act
+                            val vs0 = viewSize
+                            var cropL = 0
+                            var cropT = 0
+                            val frameBmp: Bitmap? = try { rotateBitmap(proxy.toBitmap(), rot) } catch (_: Exception) { null }
+                            val input = if (frameBmp != null && vs0.width > 0 && vs0.height > 0) {
+                                val sc = maxOf(vs0.width / imgW, vs0.height / imgH)
+                                val ddx = (vs0.width - imgW * sc) / 2f
+                                val ddy = (vs0.height - imgH * sc) / 2f
+                                val g = guideRect(vs0.width, vs0.height)
+                                val mx = g.width * 0.08f
+                                val my = g.height * 0.15f
+                                cropL = ((g.left - mx - ddx) / sc).toInt().coerceIn(0, imgW - 2)
+                                cropT = ((g.top - my - ddy) / sc).toInt().coerceIn(0, imgH - 2)
+                                val cropR = ((g.right + mx - ddx) / sc).toInt().coerceIn(cropL + 1, imgW)
+                                val cropB = ((g.bottom + my - ddy) / sc).toInt().coerceIn(cropT + 1, imgH)
+                                InputImage.fromBitmap(Bitmap.createBitmap(frameBmp, cropL, cropT, cropR - cropL, cropB - cropT), 0)
+                            } else InputImage.fromMediaImage(media, rot)
                             recognizer.process(input)
                                 .addOnSuccessListener { text ->
-                                    val (lines, rects) = IdScanner.linesAndBoxes(text)
+                                    val (lines, rects0) = IdScanner.linesAndBoxes(text)
+                                    // casetele înapoi în coordonatele cadrului întreg
+                                    val rects = rects0.map { RectF(it.left + cropL, it.top + cropT, it.right + cropL, it.bottom + cropT) }
                                     val frameResult = IdCardParser.parse(lines)
                                     // câmpurile se cumulează între cadre: CNP dintr-unul, numele din altul
                                     accumulated = IdCardParser.merge(accumulated, frameResult)
@@ -261,9 +293,8 @@ fun IdCameraScanDialog(
                                     }
                                     if (result.cnpSure && result.surname.isNotBlank() && result.givenNames.isNotBlank()) {
                                         if (stableCount >= 2) {
-                                            val bmp = try { rotateBitmap(proxy.toBitmap(), rot) } catch (_: Exception) { null }
-                                            lastFrame = bmp
-                                            finish(result, lines, bmp)
+                                            lastFrame = frameBmp
+                                            finish(result, lines, frameBmp)
                                         }
                                     }
                                 }

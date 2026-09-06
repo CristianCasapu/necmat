@@ -104,6 +104,108 @@ object IdScanner {
         Scan(lines, thumb, result)
     }
 
+    /**
+     * Citirea pe zone a unui act deja decupat și îndreptat (de scanerul de
+     * documente): cardul ocupă toată imaginea, deci putem tăia zonele cunoscute
+     * ale cărții de identitate — fără fotografie, banda MRZ, blocul de adresă —
+     * și le putem citi mărite și preprocesate separat, apoi cumulăm.
+     */
+    suspend fun scanCard(context: Context, uri: Uri): Scan = withContext(Dispatchers.IO) {
+        val decoded = decodeScaled(context, uri, 2400) ?: return@withContext Scan(emptyList(), null)
+        // cardul e landscape; scanerul poate întoarce portret
+        val card = if (decoded.height > decoded.width) rotate(decoded, 90f) else decoded
+        var result = IdScanResult()
+        var lines: List<String> = emptyList()
+        fun complete() = result.cnpSure && result.surname.isNotBlank() &&
+            result.givenNames.isNotBlank() && result.addressSure
+        val passes: List<Pair<String, () -> Bitmap>> = listOf(
+            "card" to { card },
+            "card contrast" to { enhance(card) },
+            // zona de text, fără fotografie (stânga ~24 %) și fără MRZ (jos ~22 %), mărită 1,5×
+            "zona text" to { cropRegion(card, 0.24f, 0.0f, 1.0f, 0.78f, 1.5f) },
+            "MRZ 2×" to { cropBottom(card, 0.30f, 2f) },
+            "MRZ binarizat" to { scale(binarize(cropBottom(card, 0.30f, 1f)), 2f) },
+            // blocul de adresă (cartea veche): sub mijloc, în dreapta fotografiei
+            "adresă 2×" to { cropRegion(card, 0.24f, 0.50f, 1.0f, 0.80f, 2f) },
+            "adresă contrast" to { enhance(cropRegion(card, 0.24f, 0.50f, 1.0f, 0.80f, 2f)) }
+        )
+        for ((name, make) in passes) {
+            if (complete()) break
+            val l = try {
+                recognize(make())
+            } catch (e: Exception) {
+                AppLog.w("Scan", "Trecerea „$name” a eșuat", e)
+                emptyList()
+            }
+            val r = IdCardParser.parse(l)
+            AppLog.d("Scan", "Trecere $name: ${l.size} linii, cnp=${r.cnpSure}, nume=${r.surname.isNotBlank()}, adresă=${r.addressSure}")
+            if (l.size > lines.size) lines = l
+            result = IdCardParser.merge(result, r)
+        }
+        // cartea electronică nu are adresa pe față: dacă nu găsim eticheta, nu mai insistăm
+        val thumb = try {
+            val s = THUMB_PX.toFloat() / maxOf(card.width, card.height)
+            if (s < 1f) scale(card, s) else card
+        } catch (e: Exception) {
+            null
+        }
+        AppLog.i("Scan", "Act decupat citit: cnp=${result.cnpSure}, nume=${result.surname.isNotBlank()}, adresă=${result.address.isNotBlank()}")
+        Scan(lines, thumb, result)
+    }
+
+    /** Decupaj în fracțiuni din lățime/înălțime, opțional mărit. */
+    fun cropRegion(src: Bitmap, x0: Float, y0: Float, x1: Float, y1: Float, scaleBy: Float = 1f): Bitmap {
+        val l = (src.width * x0).toInt().coerceIn(0, src.width - 1)
+        val t = (src.height * y0).toInt().coerceIn(0, src.height - 1)
+        val w = ((src.width * x1).toInt() - l).coerceIn(1, src.width - l)
+        val h = ((src.height * y1).toInt() - t).coerceIn(1, src.height - t)
+        val crop = Bitmap.createBitmap(src, l, t, w, h)
+        return if (scaleBy == 1f) crop else scale(crop, scaleBy)
+    }
+
+    private fun scale(src: Bitmap, factor: Float): Bitmap = Bitmap.createScaledBitmap(
+        src, (src.width * factor).toInt().coerceAtLeast(1), (src.height * factor).toInt().coerceAtLeast(1), true
+    )
+
+    /** Binarizare Otsu (prag automat): textul MRZ negru pe fond alb, fără ghioșe. */
+    fun binarize(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        val gray = IntArray(w * h)
+        val hist = IntArray(256)
+        for (i in px.indices) {
+            val c = px[i]
+            val g = (((c shr 16) and 0xFF) * 299 + ((c shr 8) and 0xFF) * 587 + (c and 0xFF) * 114) / 1000
+            gray[i] = g
+            hist[g]++
+        }
+        val total = w * h
+        var sum = 0L
+        for (i in 0..255) sum += i.toLong() * hist[i]
+        var sumB = 0L
+        var wB = 0L
+        var best = 0.0
+        var thr = 128
+        for (t in 0..255) {
+            wB += hist[t]
+            if (wB == 0L) continue
+            val wF = total - wB
+            if (wF == 0L) break
+            sumB += t.toLong() * hist[t]
+            val mB = sumB.toDouble() / wB
+            val mF = (sum - sumB).toDouble() / wF
+            val v = wB.toDouble() * wF * (mB - mF) * (mB - mF)
+            if (v > best) {
+                best = v
+                thr = t
+            }
+        }
+        for (i in px.indices) px[i] = if (gray[i] > thr) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+        return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+    }
+
     /** Cât de completă e citirea: CNP validat cântărește cel mai mult, apoi numele, adresa, volumul de text. */
     private fun score(r: IdScanResult, lineCount: Int): Int =
         (if (r.cnpSure) 100 else if (r.cnp.isNotBlank()) 40 else 0) +

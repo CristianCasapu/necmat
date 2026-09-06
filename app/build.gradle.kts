@@ -19,8 +19,8 @@ android {
         applicationId = "com.necmat.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 33
-        versionName = "1.32"
+        versionCode = 34
+        versionName = "1.33"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -80,6 +80,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     // recunoaștere de text pe dispozitiv (scanarea actului de identitate), model latin inclus în APK
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // detectarea conturului actului + îndreptare (modul livrat prin serviciile Google Play)
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     // camera în aplicație pentru scanarea actului în timp real
     implementation("androidx.camera:camera-core:1.6.2")
     implementation("androidx.camera:camera-camera2:1.6.2")
