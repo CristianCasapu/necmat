@@ -249,13 +249,26 @@ object IdScanner {
     private fun decodeScaled(context: Context, uri: Uri, maxPx: Int): Bitmap? {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        // ATENȚIE: cu inJustDecodeBounds decodeStream întoarce mereu null — nu e semn de eroare
+        val boundsStream = resolver.openInputStream(uri)
+        if (boundsStream == null) {
+            AppLog.w("Scan", "Nu pot deschide imaginea: $uri")
+            return null
+        }
+        boundsStream.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            AppLog.w("Scan", "Imagine fără dimensiuni (format necunoscut?): $uri")
+            return null
+        }
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxPx) sample *= 2
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
         val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-            ?: return null
+        if (bitmap == null) {
+            AppLog.w("Scan", "Decodarea imaginii a eșuat (${bounds.outWidth}×${bounds.outHeight}, sample=$sample)")
+            return null
+        }
+        AppLog.d("Scan", "Imagine decodată ${bitmap.width}×${bitmap.height} (original ${bounds.outWidth}×${bounds.outHeight})")
 
         val orientation = try {
             resolver.openInputStream(uri)?.use {
