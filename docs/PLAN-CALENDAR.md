@@ -1,6 +1,6 @@
 # Plan funcții noi: Materiale existente la client · Clienți · Scanare buletin · Calendar și programări
 
-Stare: **etapele obligatorii livrate (M, 0, S, 1, 2)** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23; Etapa 1 livrată în v1.24 (Setările au trecut în meniul ⋮ cât timp tab-ul Calendar e activ); Etapa 2 livrată în v1.25. Rămân opționale: 3 (notificări proprii) și 4 (rafinări).
+Stare: **etapele obligatorii livrate (M, 0, S, 1, 2)** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23; Etapa 1 livrată în v1.24 (Setările au trecut în meniul ⋮ cât timp tab-ul Calendar e activ); Etapa 2 livrată în v1.25. Etapa 3 livrată în v1.26; urmează Etapa 4.
 Fiecare etapă = o versiune publicată separat (teste → build → bump → commit → release),
 ca să poți folosi și testa pe teren fiecare bucată înainte de următoarea.
 
@@ -291,18 +291,18 @@ Aici apare valoarea reală: știi unde trebuie să fii și când.
 
 ---
 
-## Etapa 3 — Notificări proprii (v1.26) — *opțională*
+## Etapa 3 — Notificări proprii (v1.26) — ✅ livrată 2026-09-06
 
 Doar dacă „Adaugă în calendarul telefonului” nu îți ajunge (de ex. vrei remindere
 automate pentru **toate** programările fără să le adaugi manual).
 
-- [ ] Canal de notificări + permisiune `POST_NOTIFICATIONS` (Android 13+), cerută la prima programare
-- [ ] `AlarmManager` cu `setAndAllowWhileIdle` (inexact — evităm permisiunea de alarme exacte
+- [x] Canal de notificări + permisiune `POST_NOTIFICATIONS` (Android 13+), cerută la prima programare
+- [x] `AlarmManager` cu `setAndAllowWhileIdle` (inexact — evităm permisiunea de alarme exacte
       și justificarea ei în Play Store); reminder implicit 60 min înainte, per programare ajustabil
-- [ ] Receiver `BOOT_COMPLETED` care reprogramează alarmele după repornirea telefonului
-- [ ] Apăsarea notificării deschide aplicația direct pe programare
-- [ ] Notificare de dimineață (opțional, 07:00): „Azi ai 3 programări, prima la 09:00 la …”
-- [ ] Teste: calculul momentului reminderului, reprogramare după repornire, programări anulate nu notifică
+- [x] Receiver `BOOT_COMPLETED` care reprogramează alarmele după repornirea telefonului
+- [x] Apăsarea notificării deschide aplicația direct pe programare
+- [x] Notificare de dimineață (opțional, 07:00): „Azi ai 3 programări, prima la 09:00 la …”
+- [x] Teste: calculul momentului reminderului, reprogramare după repornire, programări anulate nu notifică
 
 ---
 

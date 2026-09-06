@@ -1,10 +1,13 @@
 package com.necmat.app
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.CalendarContract
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -55,6 +58,7 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -146,6 +150,21 @@ fun CalendarScreen(vm: AppViewModel, onCreateWork: () -> Unit, onDeleted: (Strin
     val next = nextUpcoming(vm.appointments, now)
     val view = vm.calendarView
     var selectedDay by remember { mutableStateOf(today) }
+    LaunchedEffect(vm.openAppointmentId) {
+        val id = vm.openAppointmentId ?: return@LaunchedEffect
+        if (id > 0 && vm.appointments.any { it.id == id }) {
+            expandedId = id
+            vm.selectCalendarView(CalendarView.AGENDA)
+        }
+        vm.requestOpenAppointment(null)
+    }
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* reminderele se programează oricum; fără permisiune nu se afișează */ }
+    fun askNotificationPermission() {
+        if (vm.settings.remindersEnabled && ReminderScheduler.needsPermission(context))
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
     var month by remember { mutableStateOf(YearMonth.from(today)) }
     var weekAnchor by remember { mutableStateOf(today) }
     fun newOn(day: LocalDate) {
@@ -314,6 +333,7 @@ fun CalendarScreen(vm: AppViewModel, onCreateWork: () -> Unit, onDeleted: (Strin
         }
         FloatingActionButton(
             onClick = {
+                askNotificationPermission()
                 creating = Appointment(
                     0L, "", suggestedStart(now), vm.settings.defaultDurationMin,
                     type = AppointmentType.VIZITA
@@ -486,6 +506,7 @@ fun AppointmentDialog(
     var duration by remember { mutableStateOf(initial.durationMin) }
     var notes by remember { mutableStateOf(initial.notes) }
     var workId by remember { mutableStateOf(initial.workId) }
+    var reminder by remember { mutableStateOf(initial.reminderMin) }
     var showDate by remember { mutableStateOf(false) }
     var showTime by remember { mutableStateOf(false) }
     var showWorkPicker by remember { mutableStateOf(false) }
@@ -495,7 +516,8 @@ fun AppointmentDialog(
         title = title.trim(), type = type, clientId = clientId, clientName = clientName.trim(),
         address = address.trim(), phone = phone.trim(),
         start = if (allDay) epochOf(date, LocalTime.MIDNIGHT) else epochOf(date, time),
-        allDay = allDay, durationMin = duration.coerceIn(15, 24 * 60), notes = notes.trim(), workId = workId
+        allDay = allDay, durationMin = duration.coerceIn(15, 24 * 60), notes = notes.trim(), workId = workId,
+        reminderMin = reminder
     )
 
     val candidate = build()
@@ -635,6 +657,18 @@ fun AppointmentDialog(
                         listOf(30, 60, 90, 120, 240, 480).forEach { d ->
                             FilterChip(selected = duration == d, onClick = { duration = d },
                                 label = { Text(if (d < 60) "$d min" else if (d % 60 == 0) "${d / 60} h" else "${d / 60}h${d % 60}") })
+                        }
+                    }
+                }
+                if (vm.settings.remindersEnabled) {
+                    Text("Reminder", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(
+                            REMINDER_USE_DEFAULT to "Implicit (${vm.settings.reminderDefaultMin} min)",
+                            0 to "Fără", 15 to "15 min", 60 to "1 h", 180 to "3 h", 1440 to "1 zi"
+                        ).forEach { (v, label) ->
+                            FilterChip(selected = reminder == v, onClick = { reminder = v }, label = { Text(label) })
                         }
                     }
                 }

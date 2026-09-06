@@ -104,7 +104,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.viewModels
 import com.necmat.app.ui.NecMatTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -115,14 +115,30 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
+    private val vm: AppViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleOpenIntent(intent)
         setContent {
-            val vm: AppViewModel = viewModel()
             NecMatTheme(vm.themeMode) {
                 App(vm)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOpenIntent(intent)
+    }
+
+    /** Deschisă dintr-o notificare de programare: sare la Calendar (și la programare). */
+    private fun handleOpenIntent(intent: Intent?) {
+        if (intent?.hasExtra(ReminderScheduler.EXTRA_OPEN) == true) {
+            vm.requestOpenAppointment(intent.getLongExtra(ReminderScheduler.EXTRA_OPEN, -1L))
+            intent.removeExtra(ReminderScheduler.EXTRA_OPEN)
         }
     }
 }
@@ -283,6 +299,10 @@ fun App(vm: AppViewModel) {
     }
 
     LaunchedEffect(Unit) { vm.autoCheckUpdate() }
+    // notificare de programare → ecranul Calendar
+    LaunchedEffect(vm.openAppointmentId) {
+        if (vm.openAppointmentId != null && vm.settings.showCalendar) screen = Screen.CALENDAR
+    }
 
     val totalPieces = vm.categories.sumOf { c -> c.materials.sumOf { it.qty } }
     val totalTypes = vm.categories.sumOf { c -> c.materials.count { it.qty > 0 } }
@@ -1691,6 +1711,74 @@ private fun SettingsScreen(
         TextButton(onClick = { vm.saveSettings(s.copy(confirmTemplate = DEFAULT_CONFIRM_TEMPLATE)) }) {
             Text("Revino la mesajul implicit")
         }
+
+        SettingsHeader("Remindere (notificări)")
+        val notifPermLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            if (!granted) Toast.makeText(
+                context, "Fără permisiunea de notificări reminderele nu pot fi afișate", Toast.LENGTH_LONG
+            ).show()
+        }
+        SwitchRow(
+            title = "Remindere pentru programări",
+            subtitle = "Notificare înainte de fiecare programare activă, chiar cu aplicația închisă; " +
+                "alarme inexacte (fără permisiuni speciale), pe telefon",
+            checked = s.remindersEnabled,
+            onChange = {
+                vm.saveSettings(s.copy(remindersEnabled = it))
+                if (it && ReminderScheduler.needsPermission(context))
+                    notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        )
+        if (s.remindersEnabled && !ReminderScheduler.canNotify(context)) {
+            Text(
+                "Notificările sunt blocate din sistem pentru NecMat.",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+            TextButton(onClick = {
+                if (ReminderScheduler.needsPermission(context))
+                    notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                else try {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Deschide setările telefonului → Aplicații → NecMat → Notificări", Toast.LENGTH_LONG).show()
+                }
+            }) { Text("Permite notificările") }
+        }
+        OutlinedTextField(
+            value = if (s.reminderDefaultMin == 0) "" else "${s.reminderDefaultMin}",
+            onValueChange = { v ->
+                vm.saveSettings(s.copy(reminderDefaultMin = v.filter { it.isDigit() }.take(4).toIntOrNull() ?: 0))
+            },
+            label = { Text("Reminder implicit: minute înainte (0 = fără)") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            enabled = s.remindersEnabled,
+            modifier = Modifier.fillMaxWidth()
+        )
+        SwitchRow(
+            title = "Rezumatul zilei dimineața",
+            subtitle = "„Azi ai 3 programări, prima la 09:00 la …” — doar în zilele cu programări",
+            checked = s.morningSummary,
+            onChange = { vm.saveSettings(s.copy(morningSummary = it)) }
+        )
+        if (s.morningSummary) OutlinedTextField(
+            value = "${s.morningHour}",
+            onValueChange = { v ->
+                v.filter { it.isDigit() }.take(2).toIntOrNull()?.let { h ->
+                    if (h in 0..23) vm.saveSettings(s.copy(morningHour = h))
+                }
+            },
+            label = { Text("Ora rezumatului (0–23)") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
         if (vm.selfUpdateAvailable) SwitchRow(
             title = "Caută actualizări la pornire",
             subtitle = "Verifică automat GitHub la deschiderea aplicației",

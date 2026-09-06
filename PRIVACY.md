@@ -24,6 +24,10 @@ personale sau de utilizare.
   fișa clientului de pe telefon, după ce le confirmați; CNP-ul nu apare
   niciodată în PDF-uri sau în textele partajate și poate fi dezactivat din
   Setări.
+- **Reminderele pentru programări** sunt notificări locale, programate pe
+  telefon cu alarme ale sistemului; nu implică niciun server. Permisiunea de
+  notificări (Android 13+) și cea de repornire (pentru reprogramarea alarmelor
+  după restart) servesc exclusiv acestui scop și pot fi refuzate.
 - Varianta distribuită prin GitHub contactează `api.github.com` doar pentru
   a verifica dacă există o versiune nouă a aplicației; nu se transmite nicio
   informație personală. Varianta din Google Play nu face nicio conexiune de

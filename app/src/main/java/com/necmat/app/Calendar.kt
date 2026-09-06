@@ -55,7 +55,9 @@ data class Appointment(
     val phone: String = "",
     val workId: Long? = null,
     val notes: String = "",
-    val createdAt: Long = 0L
+    val createdAt: Long = 0L,
+    /** Minute înainte pentru reminder: -1 = implicitul din Setări, 0 = fără. */
+    val reminderMin: Int = REMINDER_USE_DEFAULT
 ) {
     val end: Long get() = if (allDay) startOfDay(start) + DAY_MS else start + durationMin * 60_000L
     val isActive: Boolean get() = status == AppointmentStatus.PROGRAMAT || status == AppointmentStatus.CONFIRMAT
@@ -247,6 +249,7 @@ object AppointmentsRepo {
         .put("type", a.type.name).put("status", a.status.name)
         .put("clientName", a.clientName).put("address", a.address).put("phone", a.phone)
         .put("notes", a.notes).put("createdAt", a.createdAt)
+        .put("reminderMin", a.reminderMin)
         .apply {
             a.clientId?.let { put("clientId", it) }
             a.workId?.let { put("workId", it) }
@@ -266,7 +269,8 @@ object AppointmentsRepo {
         phone = o.optString("phone", ""),
         workId = if (o.has("workId") && !o.isNull("workId")) o.getLong("workId") else null,
         notes = o.optString("notes", ""),
-        createdAt = o.optLong("createdAt", 0L)
+        createdAt = o.optLong("createdAt", 0L),
+        reminderMin = o.optInt("reminderMin", REMINDER_USE_DEFAULT)
     )
 
     fun listToJson(list: List<Appointment>): JSONArray {

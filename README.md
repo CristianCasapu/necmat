@@ -33,6 +33,10 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
   vizualizări **Lună** (grilă cu buline pe tip, zilele pline evidențiate,
   apăsare lungă = programare nouă), **Săptămână** (7 zile cu numărul
   programărilor și orele ocupate) și **Agendă**
+- **Remindere locale**: notificare înainte de fiecare programare (implicit
+  60 min, reglabil per programare), rezumat opțional dimineața („Azi ai 3
+  programări, prima la 09:00 la …”), reprogramate automat după repornirea
+  telefonului; apăsarea notificării deschide programarea
 - **PDF profesional** pentru furnizor și client: antet cu dată și referință,
   carduri Solicitant (instalator) / Beneficiar (client), tabel
   (Nr. / Denumire / Cant. / UM / P.U. / Valoare) cu marca pe fiecare categorie,

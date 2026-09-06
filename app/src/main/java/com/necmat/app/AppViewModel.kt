@@ -36,7 +36,15 @@ data class AppSettings(
     /** Durata implicită a unei programări noi (minute). */
     val defaultDurationMin: Int = 60,
     /** Textul mesajului de confirmare trimis clientului (SMS / WhatsApp). */
-    val confirmTemplate: String = DEFAULT_CONFIRM_TEMPLATE
+    val confirmTemplate: String = DEFAULT_CONFIRM_TEMPLATE,
+    /** Remindere locale (notificări) pentru programări. */
+    val remindersEnabled: Boolean = true,
+    /** Cu câte minute înainte se afișează reminderul implicit. */
+    val reminderDefaultMin: Int = 60,
+    /** Notificare de dimineață cu programul zilei. */
+    val morningSummary: Boolean = false,
+    /** Ora rezumatului de dimineață (0–23). */
+    val morningHour: Int = 7
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -80,6 +88,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun selectCalendarView(v: CalendarView) {
         calendarView = v
         prefs().edit().putString("cal_view", v.name).apply()
+    }
+
+    /** Programarea de deschis (venită dintr-o notificare); -1 = doar ecranul Calendar. */
+    var openAppointmentId by mutableStateOf<Long?>(null)
+        private set
+
+    fun requestOpenAppointment(id: Long?) {
+        openAppointmentId = id
+    }
+
+    private fun syncReminders() {
+        ReminderScheduler.sync(getApplication(), appointments)
     }
 
     var themeMode by mutableStateOf(loadTheme())
@@ -213,6 +233,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             prefs().edit().putBoolean("migr_clients", true).apply()
             AppLog.i("Clienti", "Clienți extrași din lucrări: ${cl.size}")
         }
+        // reminderele se reprogramează la fiecare pornire (alarmele nu supraviețuiesc actualizărilor)
+        syncReminders()
         // reparare id-uri duplicate (generatorul vechi putea produce coliziuni)
         val deduped = Repo.fixDuplicateIds(categories) { newId() }
         if (deduped != categories) {
@@ -258,7 +280,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         undoState = null
         undoClients?.let { clients = it; persistClients() }
         undoClients = null
-        undoAppointments?.let { appointments = it; persistAppointments() }
+        undoAppointments?.let { appointments = it; persistAppointments(); syncReminders() }
         undoAppointments = null
         persist()
         persistWorks()
@@ -282,6 +304,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         appointments = if (exists) appointments.map { if (it.id == saved.id) saved else it }
         else appointments + saved
         persistAppointments()
+        syncReminders()
         AppLog.i(
             "Calendar",
             "${if (exists) "Programare actualizată" else "Programare nouă"}: ${saved.type.label} " +
@@ -293,6 +316,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setAppointmentStatus(id: Long, status: AppointmentStatus) {
         appointments = appointments.map { if (it.id == id) it.copy(status = status) else it }
         persistAppointments()
+        syncReminders()
         AppLog.i("Calendar", "Programarea $id → ${status.label}")
     }
 
@@ -302,6 +326,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         AppLog.i("Calendar", "Programare ștearsă: $id")
         appointments = appointments.filter { it.id != id }
         persistAppointments()
+        syncReminders()
     }
 
     // ---- clienți ----
@@ -808,6 +833,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .put("showCalendar", settings.showCalendar)
         .put("defaultDurationMin", settings.defaultDurationMin)
         .put("confirmTemplate", settings.confirmTemplate)
+        .put("remindersEnabled", settings.remindersEnabled)
+        .put("reminderDefaultMin", settings.reminderDefaultMin)
+        .put("morningSummary", settings.morningSummary)
+        .put("morningHour", settings.morningHour)
 
     fun backupJson(): String =
         Repo.backupJson(categories, works, brands, labor, settingsToJson(), clients, appointments)
@@ -822,6 +851,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         clients = restoredClients
         works = restoredWorks
         appointments = parsed.appointments
+        syncReminders()
         if (parsed.brands.isNotEmpty()) brands = parsed.brands
         parsed.labor?.let { labor = Repo.mergeLaborDefaults(it) }
         parsed.settings?.let { s ->
@@ -841,7 +871,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     storeCnp = s.optBoolean("storeCnp", settings.storeCnp),
                     showCalendar = s.optBoolean("showCalendar", settings.showCalendar),
                     defaultDurationMin = s.optInt("defaultDurationMin", settings.defaultDurationMin),
-                    confirmTemplate = s.optString("confirmTemplate", settings.confirmTemplate)
+                    confirmTemplate = s.optString("confirmTemplate", settings.confirmTemplate),
+                    remindersEnabled = s.optBoolean("remindersEnabled", settings.remindersEnabled),
+                    reminderDefaultMin = s.optInt("reminderDefaultMin", settings.reminderDefaultMin),
+                    morningSummary = s.optBoolean("morningSummary", settings.morningSummary),
+                    morningHour = s.optInt("morningHour", settings.morningHour)
                 )
             )
         }
@@ -936,11 +970,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             storeCnp = p.getBoolean("store_cnp", true),
             showCalendar = p.getBoolean("cal_show", true),
             defaultDurationMin = p.getInt("cal_dur", 60),
-            confirmTemplate = p.getString("cal_tpl", DEFAULT_CONFIRM_TEMPLATE) ?: DEFAULT_CONFIRM_TEMPLATE
+            confirmTemplate = p.getString("cal_tpl", DEFAULT_CONFIRM_TEMPLATE) ?: DEFAULT_CONFIRM_TEMPLATE,
+            remindersEnabled = p.getBoolean("rem_enabled", true),
+            reminderDefaultMin = p.getInt("rem_default", 60),
+            morningSummary = p.getBoolean("rem_morning", false),
+            morningHour = p.getInt("rem_hour", 7)
         )
     }
 
     fun saveSettings(s: AppSettings) {
+        val old = settings
         val recheckOwned = s.autoAccessories != settings.autoAccessories ||
             s.includeBoxesInPdf != settings.includeBoxesInPdf
         // CNP-ul dezactivat = șters imediat din toate fișele (nu doar ascuns)
@@ -967,8 +1006,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("cal_show", s.showCalendar)
             .putInt("cal_dur", s.defaultDurationMin)
             .putString("cal_tpl", s.confirmTemplate)
+            .putBoolean("rem_enabled", s.remindersEnabled)
+            .putInt("rem_default", s.reminderDefaultMin)
+            .putBoolean("rem_morning", s.morningSummary)
+            .putInt("rem_hour", s.morningHour)
             .apply()
         if (recheckOwned) trimOwned()
+        if (s.remindersEnabled != old.remindersEnabled || s.reminderDefaultMin != old.reminderDefaultMin ||
+            s.morningSummary != old.morningSummary || s.morningHour != old.morningHour
+        ) syncReminders()
     }
 
     /**
