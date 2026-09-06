@@ -37,6 +37,10 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
   60 min, reglabil per programare), rezumat opțional dimineața („Azi ai 3
   programări, prima la 09:00 la …”), reprogramate automat după repornirea
   telefonului; apăsarea notificării deschide programarea
+- **Rafinări**: istoricul clientului combină lucrările și programările
+  („Programează revizie” din fișă), agenda are căutare și filtre pe tip /
+  active, statistica lunii, **PDF „Program săptămânal”** și **export .ics**
+  al programărilor, culori configurabile pe tip de programare
 - **PDF profesional** pentru furnizor și client: antet cu dată și referință,
   carduri Solicitant (instalator) / Beneficiar (client), tabel
   (Nr. / Denumire / Cant. / UM / P.U. / Valoare) cu marca pe fiecare categorie,

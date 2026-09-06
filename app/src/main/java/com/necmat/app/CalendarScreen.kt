@@ -81,13 +81,52 @@ import java.time.ZoneOffset
 
 // ------------------------------------------------------------------ culori și acțiuni
 
+/** Culoarea tipului: paleta configurabilă din Setări (v1.27). */
 @Composable
-fun typeColor(t: AppointmentType): Color = when (t) {
-    AppointmentType.VIZITA -> MaterialTheme.colorScheme.primary
-    AppointmentType.OFERTA -> MaterialTheme.colorScheme.tertiary
-    AppointmentType.EXECUTIE -> Color(0xFF2E7D32)
-    AppointmentType.REVIZIE -> Color(0xFFEF6C00)
-    AppointmentType.ALTELE -> MaterialTheme.colorScheme.secondary
+fun typeColor(t: AppointmentType): Color = Color(TypePalette.colors[TypePalette.indexOf(t)])
+
+/** Partajează fișierul iCalendar cu programările active. */
+fun shareIcs(context: Context, appointments: List<Appointment>) {
+    try {
+        val dir = java.io.File(context.cacheDir, "pdfs").apply { mkdirs() }
+        val file = java.io.File(dir, "NecMat programari.ics")
+        file.writeText(icsFor(appointments))
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/calendar"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Exportă programările (.ics)"))
+        AppLog.i("Calendar", "Export .ics: ${appointments.count { it.isActive }} programări")
+    } catch (e: Exception) {
+        AppLog.e("Calendar", "Export .ics eșuat", e)
+        Toast.makeText(context, "Exportul a eșuat", Toast.LENGTH_LONG).show()
+    }
+}
+
+/** Generează și partajează PDF-ul cu programul săptămânii. */
+fun shareWeekPdf(context: Context, vm: AppViewModel, days: List<LocalDate>) {
+    try {
+        val r = PdfExporter.exportWeekSchedule(
+            context, days, vm.appointments, vm.settings.installerName, vm.settings.installerCompany
+        )
+        Toast.makeText(
+            context,
+            if (r.savedToDownloads) "PDF salvat în Descărcări/NecMat: ${r.fileName}" else "PDF generat: ${r.fileName}",
+            Toast.LENGTH_LONG
+        ).show()
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, r.shareUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Trimite programul"))
+        AppLog.i("Pdf", "Program săptămânal generat: ${r.fileName}")
+    } catch (e: Exception) {
+        AppLog.e("Pdf", "Eroare la programul săptămânal", e)
+        Toast.makeText(context, "Eroare la generarea PDF", Toast.LENGTH_LONG).show()
+    }
 }
 
 private fun open(context: Context, intent: Intent, error: String) {
@@ -144,9 +183,13 @@ fun CalendarScreen(vm: AppViewModel, onCreateWork: () -> Unit, onDeleted: (Strin
     var editing by remember { mutableStateOf<Appointment?>(null) }
     var deleting by remember { mutableStateOf<Appointment?>(null) }
     var expandedId by remember { mutableStateOf<Long?>(null) }
+    var agendaQuery by remember { mutableStateOf("") }
+    var agendaTypes by remember { mutableStateOf(setOf<AppointmentType>()) }
+    var onlyActive by remember { mutableStateOf(false) }
     val now = System.currentTimeMillis()
     val today = toLocalDate(now)
-    val groups = groupForAgenda(vm.appointments, now)
+    val agendaSource = filterAppointments(vm.appointments, agendaQuery, agendaTypes, onlyActive)
+    val groups = groupForAgenda(agendaSource, now)
     val next = nextUpcoming(vm.appointments, now)
     val view = vm.calendarView
     var selectedDay by remember { mutableStateOf(today) }
@@ -226,6 +269,37 @@ fun CalendarScreen(vm: AppViewModel, onCreateWork: () -> Unit, onDeleted: (Strin
                         selected = view == v,
                         onClick = { vm.selectCalendarView(v) },
                         label = { Text(v.label) }
+                    )
+                }
+            }
+            if (view == CalendarView.AGENDA && vm.appointments.isNotEmpty()) {
+                Column(Modifier.padding(horizontal = 12.dp)) {
+                    OutlinedTextField(
+                        value = agendaQuery, onValueChange = { agendaQuery = it },
+                        placeholder = { Text("Caută (client, adresă, notițe)…") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        trailingIcon = {
+                            if (agendaQuery.isNotBlank()) TextButton(onClick = { agendaQuery = "" }) { Text("✕") }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AppointmentType.entries.forEach { t ->
+                            FilterChip(
+                                selected = t in agendaTypes,
+                                onClick = { agendaTypes = if (t in agendaTypes) agendaTypes - t else agendaTypes + t },
+                                label = { Text(t.label) }
+                            )
+                        }
+                        FilterChip(selected = onlyActive, onClick = { onlyActive = !onlyActive }, label = { Text("Doar active") })
+                    }
+                    if (groups.isEmpty()) Text(
+                        "Nicio programare nu se potrivește filtrului.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
                 }
             }
@@ -318,6 +392,13 @@ fun CalendarScreen(vm: AppViewModel, onCreateWork: () -> Unit, onDeleted: (Strin
                         onSelect = { selectedDay = it; month = YearMonth.from(it) },
                         onNewOn = { newOn(it) }
                     )
+                    val st = monthStats(vm.appointments, month)
+                    if (st.total > 0) Text(
+                        "Luna aceasta: ${st.total} programări · ${st.active} active · ${st.done} finalizate · ${st.cancelled} anulate",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                    )
                     dayList(selectedDay)
                 }
                 CalendarView.WEEK -> {
@@ -327,6 +408,19 @@ fun CalendarScreen(vm: AppViewModel, onCreateWork: () -> Unit, onDeleted: (Strin
                         onSelect = { selectedDay = it; weekAnchor = it },
                         onNewOn = { newOn(it) }
                     )
+                    Row(
+                        Modifier.padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { shareWeekPdf(context, vm, weekOf(weekAnchor)) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("PDF săptămâna", maxLines = 1) }
+                        OutlinedButton(
+                            onClick = { shareIcs(context, vm.appointments) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Export .ics", maxLines = 1) }
+                    }
                     dayList(selectedDay)
                 }
             }

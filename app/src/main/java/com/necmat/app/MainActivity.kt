@@ -1779,6 +1779,32 @@ private fun SettingsScreen(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth()
         )
+
+        SettingsHeader("Culorile tipurilor de programări")
+        AppointmentType.entries.forEach { t ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(t.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(80.dp))
+                val current = TypePalette.indexOf(t)
+                TypePalette.colors.forEachIndexed { i, c ->
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(androidx.compose.ui.graphics.Color(c))
+                            .clickable { vm.setTypeColor(t, i) }
+                    ) {
+                        if (i == current) Text("✓", color = androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
         if (vm.selfUpdateAvailable) SwitchRow(
             title = "Caută actualizări la pornire",
             subtitle = "Verifică automat GitHub la deschiderea aplicației",

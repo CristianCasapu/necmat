@@ -1,6 +1,6 @@
 # Plan funcții noi: Materiale existente la client · Clienți · Scanare buletin · Calendar și programări
 
-Stare: **etapele obligatorii livrate (M, 0, S, 1, 2)** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23; Etapa 1 livrată în v1.24 (Setările au trecut în meniul ⋮ cât timp tab-ul Calendar e activ); Etapa 2 livrată în v1.25. Etapa 3 livrată în v1.26; urmează Etapa 4.
+Stare: **toate etapele livrate (M, 0, S, 1, 2, 3, 4)** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23; Etapa 1 livrată în v1.24 (Setările au trecut în meniul ⋮ cât timp tab-ul Calendar e activ); Etapa 2 livrată în v1.25. Etapele 3 și 4 livrate în v1.26 și v1.27 — **planul nativ e complet**. Urmează portul Flutter la paritate.
 Fiecare etapă = o versiune publicată separat (teste → build → bump → commit → release),
 ca să poți folosi și testa pe teren fiecare bucată înainte de următoarea.
 
@@ -306,13 +306,13 @@ automate pentru **toate** programările fără să le adaugi manual).
 
 ---
 
-## Etapa 4 — Legături, istoric și rafinări (v1.27) — *opțională*
+## Etapa 4 — Legături, istoric și rafinări (v1.27) — ✅ livrată 2026-09-06
 
-- [ ] Detaliu client: cronologie unificată (lucrări + programări), buton „Programează revizie”
-- [ ] Filtru în Agendă după tip/status; căutare
-- [ ] Export ICS al programărilor (import în orice calendar) și PDF „Program săptămânal”
-- [ ] Statistici mici în Calendar: programări luna asta, finalizate, anulate
-- [ ] Culoare/iconiță per tip de programare configurabile (se leagă de ideea existentă
+- [x] Detaliu client: cronologie unificată (lucrări + programări), buton „Programează revizie”
+- [x] Filtru în Agendă după tip/status; căutare
+- [x] Export ICS al programărilor (import în orice calendar) și PDF „Program săptămânal”
+- [x] Statistici mici în Calendar: programări luna asta, finalizate, anulate
+- [x] Culoare/iconiță per tip de programare configurabile (se leagă de ideea existentă
       „culoare per categorie”)
 
 ---

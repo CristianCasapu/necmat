@@ -751,4 +751,120 @@ object PdfExporter {
         val pg = render(pages)
         return writeOut(context, pg.doc, pdfFileName(work, prefix = "Ofertă manoperă"))
     }
+
+    // ------------------------------------------------------------------ program săptămânal
+
+    /** PDF cu programul unei săptămâni (pentru instalator / echipă): o secțiune per zi. */
+    fun exportWeekSchedule(
+        context: Context,
+        days: List<java.time.LocalDate>,
+        appointments: List<Appointment>,
+        installerName: String = "",
+        installerCompany: String = ""
+    ): Result {
+        val pt = Paints()
+        val today = toLocalDate(System.currentTimeMillis())
+        val stem = weekFileStem(days)
+        val ref = "PS-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+        val dateText = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
+        val footerLeft = "Program săptămânal  ·  Ref. $ref  ·  generat cu NecMat"
+        val tableL = MARGIN
+        val tableR = PAGE_W - MARGIN
+        val colTime = 78f
+        val colType = 70f
+        val colPhone = 84f
+        val colTimeL = tableL
+        val colTypeL = colTimeL + colTime
+        val colNameL = colTypeL + colType
+        val colPhoneL = tableR - colPhone
+        val nameW = colPhoneL - colNameL - 12f
+
+        fun render(totalPages: Int): Pager {
+            lateinit var pg: Pager
+            fun tableHeader() {
+                val c = pg.canvas
+                val y = pg.y
+                pt.fill.color = ACCENT
+                c.drawRect(tableL, y, tableR, y + HEADER_H, pt.fill)
+                c.drawText("Ora", colTimeL + 6f, y + 15f, pt.th)
+                c.drawText("Tip", colTypeL + 6f, y + 15f, pt.th)
+                c.drawText("Client · adresă · detalii", colNameL + 6f, y + 15f, pt.th)
+                c.drawText("Telefon", colPhoneL + 6f, y + 15f, pt.th)
+                pg.y += HEADER_H
+            }
+            pg = Pager(pt, totalPages, footerLeft) { p ->
+                drawContinuationBand(p, "PROGRAM SĂPTĂMÂNAL  ·  $stem", "continuare")
+                tableHeader()
+            }
+            pg.newPage(first = true)
+            val c0 = pg.canvas
+            val a = days.first()
+            val b = days.last()
+            drawBand(
+                c0, pt, "PROGRAM SĂPTĂMÂNAL",
+                "${a.dayOfMonth} ${monthLabel(a.monthValue)} – ${b.dayOfMonth} ${monthLabel(b.monthValue)} ${b.year}",
+                ref, dateText
+            )
+            var y = BAND_H + 22f
+            val who = listOf(installerCompany, installerName).filter { it.isNotBlank() }.joinToString("  ·  ")
+            if (who.isNotBlank()) {
+                c0.drawText(who, MARGIN, y, pt.title)
+                y += 18f
+            }
+            val active = appointments.filter { it.isActive }
+            val total = days.sumOf { d -> appointmentsOn(active, d).size }
+            c0.drawText("$total programări active în această săptămână", MARGIN, y, pt.meta)
+            pg.y = y + 14f
+            tableHeader()
+
+            days.forEach { day ->
+                val list = appointmentsOn(active, day)
+                pg.ensure(ROW_H * 2 + 4f)
+                var c = pg.canvas
+                pt.fill.color = if (day == today) ACCENT_LIGHT else CARD_BG
+                c.drawRect(tableL, pg.y, tableR, pg.y + ROW_H, pt.fill)
+                c.drawRect(tableL, pg.y, tableR, pg.y + ROW_H, pt.grid)
+                c.drawText(formatDayLong(day, today).uppercase(Locale.getDefault()), tableL + 6f, pg.y + 14f, pt.cat)
+                c.drawText(if (list.isEmpty()) "liber" else "${list.size} programări", tableR - 6f, pg.y + 14f, pt.catBrand)
+                pg.y += ROW_H
+                list.forEachIndexed { i, ap ->
+                    val details = listOf(ap.clientName, ap.address, ap.title, ap.notes).filter { it.isNotBlank() }
+                    val lines = wrap(details.joinToString("  ·  "), pt.item, nameW).ifEmpty { listOf("") }
+                    val rowH = maxOf(ROW_H, lines.size * LINE_H + 8f)
+                    pg.ensure(rowH)
+                    c = pg.canvas
+                    val y0 = pg.y
+                    if (i % 2 == 1) {
+                        pt.fill.color = ROW_ALT
+                        c.drawRect(tableL, y0, tableR, y0 + rowH, pt.fill)
+                    }
+                    c.drawLine(tableL, y0, tableL, y0 + rowH, pt.grid)
+                    c.drawLine(tableR, y0, tableR, y0 + rowH, pt.grid)
+                    c.drawLine(colTypeL, y0, colTypeL, y0 + rowH, pt.rule)
+                    c.drawLine(colNameL, y0, colNameL, y0 + rowH, pt.rule)
+                    c.drawLine(colPhoneL, y0, colPhoneL, y0 + rowH, pt.rule)
+                    c.drawLine(tableL, y0 + rowH, tableR, y0 + rowH, pt.rule)
+                    c.drawText(ap.timeLabel(), colTimeL + 6f, y0 + 14f, pt.itemBold)
+                    c.drawText(ap.type.label, colTypeL + 6f, y0 + 14f, pt.item)
+                    lines.forEachIndexed { li, line -> c.drawText(line, colNameL + 6f, y0 + 14f + li * LINE_H, pt.item) }
+                    c.drawText(ap.phone, colPhoneL + 6f, y0 + 14f, pt.item)
+                    pg.y += rowH
+                }
+            }
+            pg.ensure(30f)
+            pg.y += 16f
+            pg.canvas.drawText(
+                "Programările confirmate de client sunt marcate în aplicație; sună înainte de plecare.",
+                tableL, pg.y, pt.note
+            )
+            pg.finishPage()
+            return pg
+        }
+
+        val probe = render(0)
+        val pages = probe.pageNo
+        probe.doc.close()
+        val pg = render(pages)
+        return writeOut(context, pg.doc, "$stem.pdf")
+    }
 }

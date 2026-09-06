@@ -102,6 +102,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ReminderScheduler.sync(getApplication(), appointments)
     }
 
+    /** Culoarea unui tip de programare (index în TypePalette.colors), persistată. */
+    fun setTypeColor(t: AppointmentType, index: Int) {
+        if (index !in TypePalette.colors.indices) return
+        TypePalette.overrides[t] = index
+        prefs().edit().putString("type_colors", TypePalette.toJson()).apply()
+    }
+
     var themeMode by mutableStateOf(loadTheme())
         private set
 
@@ -233,6 +240,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             prefs().edit().putBoolean("migr_clients", true).apply()
             AppLog.i("Clienti", "Clienți extrași din lucrări: ${cl.size}")
         }
+        // culorile tipurilor de programări alese de utilizator
+        TypePalette.loadJson(prefs().getString("type_colors", null))
         // reminderele se reprogramează la fiecare pornire (alarmele nu supraviețuiesc actualizărilor)
         syncReminders()
         // reparare id-uri duplicate (generatorul vechi putea produce coliziuni)
@@ -837,6 +846,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .put("reminderDefaultMin", settings.reminderDefaultMin)
         .put("morningSummary", settings.morningSummary)
         .put("morningHour", settings.morningHour)
+        .put("typeColors", TypePalette.toJson())
 
     fun backupJson(): String =
         Repo.backupJson(categories, works, brands, labor, settingsToJson(), clients, appointments)
@@ -878,6 +888,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     morningHour = s.optInt("morningHour", settings.morningHour)
                 )
             )
+            s.optString("typeColors", "").takeIf { it.isNotBlank() }?.let { json ->
+                TypePalette.loadJson(json)
+                prefs().edit().putString("type_colors", json).apply()
+            }
         }
         trimOwned()
         val cats = categories

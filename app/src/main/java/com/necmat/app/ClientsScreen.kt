@@ -721,8 +721,25 @@ private fun ClientDetailDialog(
 ) {
     val context = LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
+    var scheduling by remember { mutableStateOf(false) }
     val df = remember { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()) }
-    val works = worksOfClient(vm.works, client).sortedByDescending { it.date }
+    val timeline = clientTimeline(vm.works, vm.appointments, client)
+
+    if (scheduling) AppointmentDialog(
+        vm = vm,
+        initial = Appointment(
+            0L, "", suggestedStart(System.currentTimeMillis()), vm.settings.defaultDurationMin,
+            type = AppointmentType.REVIZIE, clientId = client.id, clientName = client.name,
+            address = client.address, phone = client.phone
+        ),
+        isNew = true,
+        onDismiss = { scheduling = false },
+        onSave = {
+            vm.upsertAppointment(it)
+            scheduling = false
+            Toast.makeText(context, "Programare salvată — vezi Calendar", Toast.LENGTH_SHORT).show()
+        }
+    )
 
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
@@ -782,25 +799,43 @@ private fun ClientDetailDialog(
 
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Text(
-                    if (works.isEmpty()) "Nicio lucrare salvată pentru acest client."
-                    else "Lucrări (${works.size})",
+                    if (timeline.isEmpty()) "Nicio lucrare sau programare pentru acest client."
+                    else "Istoric (${timeline.size})",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
-                works.forEach { w ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                timeline.forEach { item ->
+                    val w = item.work
+                    val a = item.appointment
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(w.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                "${df.format(Date(w.date))}  ·  ${w.totalTypes} tipuri  ·  ${w.totalPieces} buc",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (w != null) {
+                                Text(w.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${df.format(Date(w.date))}  ·  lucrare  ·  ${w.totalTypes} tipuri  ·  ${w.totalPieces} buc",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else if (a != null) {
+                                Text(
+                                    listOf(a.type.label, a.title).filter { it.isNotBlank() }.joinToString(" · "),
+                                    style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${formatDate(a.start)}  ·  ${a.timeLabel()}  ·  ${a.status.label}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
-                        if (w.isTemplate) Badge { Text("ȘABLON") }
+                        if (w?.isTemplate == true) Badge { Text("ȘABLON") }
                     }
                 }
+                if (vm.settings.showCalendar) OutlinedButton(
+                    onClick = { scheduling = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Programează revizie / vizită") }
 
                 Spacer(Modifier.height(4.dp))
                 OutlinedButton(
