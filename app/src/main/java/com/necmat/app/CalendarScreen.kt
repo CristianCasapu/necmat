@@ -274,14 +274,9 @@ fun CalendarScreen(vm: AppViewModel, onCreateWork: () -> Unit, onDeleted: (Strin
             }
             if (view == CalendarView.AGENDA && vm.appointments.isNotEmpty()) {
                 Column(Modifier.padding(horizontal = 12.dp)) {
-                    OutlinedTextField(
+                    CompactSearchField(
                         value = agendaQuery, onValueChange = { agendaQuery = it },
-                        placeholder = { Text("Caută (client, adresă, notițe)…") },
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        trailingIcon = {
-                            if (agendaQuery.isNotBlank()) TextButton(onClick = { agendaQuery = "" }) { Text("✕") }
-                        },
+                        placeholder = "Caută (client, adresă, notițe)",
                         modifier = Modifier.fillMaxWidth()
                     )
                     @OptIn(ExperimentalLayoutApi::class)

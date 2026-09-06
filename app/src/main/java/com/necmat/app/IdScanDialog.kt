@@ -42,8 +42,10 @@ fun IdScanConfirmDialog(
     thumbnail: Bitmap?,
     showCnp: Boolean,
     onDismiss: () -> Unit,
-    onUse: (IdScanChoice) -> Unit
+    onUse: (IdScanChoice) -> Unit,
+    rawLines: List<String> = emptyList()
 ) {
+    var showRaw by remember { mutableStateOf(false) }
     var surname by remember { mutableStateOf(result.surname) }
     var given by remember { mutableStateOf(result.givenNames) }
     var cnp by remember { mutableStateOf(result.cnp) }
@@ -123,6 +125,16 @@ fun IdScanConfirmDialog(
                     },
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (rawLines.isNotEmpty()) {
+                    TextButton(onClick = { showRaw = !showRaw }) {
+                        Text(if (showRaw) "Ascunde textul recunoscut" else "Vezi textul recunoscut (${rawLines.size} linii)")
+                    }
+                    if (showRaw) Text(
+                        rawLines.joinToString("\n"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 if (result.isEmpty) Text(
                     "Nu am recunoscut niciun câmp. Încearcă o poză mai dreaptă, fără reflexii, " +
                         "cu actul pe un fundal închis și fără blitz.",

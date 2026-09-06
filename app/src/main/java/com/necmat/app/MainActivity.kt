@@ -134,6 +134,12 @@ class MainActivity : ComponentActivity() {
         handleOpenIntent(intent)
     }
 
+    override fun onPause() {
+        super.onPause()
+        // necesarul curent nu are voie să se piardă dacă aplicația e închisă brusc
+        vm.flush()
+    }
+
     /** Deschisă dintr-o notificare de programare: sare la Calendar (și la programare). */
     private fun handleOpenIntent(intent: Intent?) {
         if (intent?.hasExtra(ReminderScheduler.EXTRA_OPEN) == true) {
@@ -557,17 +563,10 @@ private fun MaterialsScreen(vm: AppViewModel, onDeleted: (String) -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedTextField(
+            CompactSearchField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("Caută material…") },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium,
-                trailingIcon = {
-                    if (query.isNotBlank()) IconButton(onClick = { query = "" }) {
-                        Text("✕", fontSize = 16.sp)
-                    }
-                },
+                placeholder = "Caută material",
                 modifier = Modifier.weight(1f)
             )
             FilterChip(
@@ -1012,43 +1011,45 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            clipboard.setText(AnnotatedString(vm.summaryText()))
-                            Toast.makeText(context, "Copiat în clipboard", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("Copiază") }
-                    OutlinedButton(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, vm.summaryText())
-                            }
-                            context.startActivity(Intent.createChooser(intent, "Trimite necesarul"))
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Trimite")
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = { showPdfName = true },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("PDF") }
+                var moreOpen by remember { mutableStateOf(false) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = { showSave = true },
                         modifier = Modifier.weight(1f)
                     ) { Text("Salvează lucrarea") }
+                    Box {
+                        IconButton(onClick = { moreOpen = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Mai multe acțiuni")
+                        }
+                        DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("PDF materiale") },
+                                onClick = { moreOpen = false; showPdfName = true })
+                            DropdownMenuItem(
+                                text = { Text("Ofertă manoperă (PDF)") },
+                                onClick = { moreOpen = false; showLaborName = true })
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Copiază necesarul") },
+                                onClick = {
+                                    moreOpen = false
+                                    clipboard.setText(AnnotatedString(vm.summaryText()))
+                                    Toast.makeText(context, "Copiat în clipboard", Toast.LENGTH_SHORT).show()
+                                })
+                            DropdownMenuItem(
+                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                                text = { Text("Trimite necesarul") },
+                                onClick = {
+                                    moreOpen = false
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, vm.summaryText())
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Trimite necesarul"))
+                                })
+                        }
+                    }
                 }
-                OutlinedButton(
-                    onClick = { showLaborName = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Ofertă manoperă (PDF)") }
             }
         }
     }
@@ -1278,8 +1279,14 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
     var laborQuoteFor by remember { mutableStateOf<Work?>(null) }
     var scheduleFor by remember { mutableStateOf<Work?>(null) }
     val df = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
-    // șabloanele sunt afișate primele
-    val sortedWorks = vm.works.sortedByDescending { it.isTemplate }
+    var query by remember { mutableStateOf("") }
+    // șabloanele sunt afișate primele; căutarea acoperă numele, clientul, adresa și telefonul
+    val sortedWorks = vm.works
+        .filter { w ->
+            query.isBlank() || listOf(w.name, w.client, w.address, w.phone)
+                .any { normalizeName(it).contains(normalizeName(query)) }
+        }
+        .sortedByDescending { it.isTemplate }
 
     if (vm.works.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1293,6 +1300,21 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
         return
     }
 
+    Column(Modifier.fillMaxSize()) {
+    CompactSearchField(
+        value = query,
+        onValueChange = { query = it },
+        placeholder = "Caută lucrare (nume, client, adresă, telefon)",
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp)
+    )
+    if (sortedWorks.isEmpty()) Text(
+        "Nicio lucrare nu se potrivește căutării.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(16.dp)
+    )
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
@@ -1406,6 +1428,7 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
         }
         item { Spacer(Modifier.height(24.dp)) }
     }
+    }
 
     scheduleFor?.let { work ->
         AppointmentDialog(
@@ -1425,9 +1448,11 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
         )
     }
     deleteWork?.let { work ->
-        ConfirmDialog(
+        CountdownConfirmDialog(
             title = "Ștergi lucrarea?",
-            text = "„${work.name}” va fi ștearsă definitiv.",
+            text = "„${work.name}” va fi ștearsă definitiv. Poți anula din bara de jos imediat după.",
+            confirmLabel = "Șterge",
+            seconds = 5,
             onDismiss = { deleteWork = null },
             onConfirm = {
                 vm.deleteWork(work.id)
@@ -2894,7 +2919,7 @@ private fun DeleteChoiceDialog(
 }
 
 @Composable
-private fun CountdownConfirmDialog(
+internal fun CountdownConfirmDialog(
     title: String,
     text: String,
     confirmLabel: String,

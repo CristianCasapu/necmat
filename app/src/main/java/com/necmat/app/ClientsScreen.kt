@@ -201,6 +201,7 @@ fun ClientFields(
     var scanBusy by remember { mutableStateOf(false) }
     var scanResult by remember { mutableStateOf<IdScanResult?>(null) }
     var scanThumb by remember { mutableStateOf<Bitmap?>(null) }
+    var scanLines by remember { mutableStateOf<List<String>>(emptyList()) }
     var captureUri by remember { mutableStateOf<Uri?>(null) }
 
     fun runScan(uri: Uri) {
@@ -220,7 +221,8 @@ fun ClientFields(
                     context, "Nu am putut citi imaginea — încearcă o poză mai clară", Toast.LENGTH_LONG
                 ).show()
             } else {
-                scanResult = IdCardParser.parse(scan.lines)
+                scanResult = scan.result
+                scanLines = scan.lines
                 scanThumb = scan.thumbnail
             }
         }
@@ -240,6 +242,7 @@ fun ClientFields(
         IdScanConfirmDialog(
             result = r,
             thumbnail = scanThumb,
+            rawLines = scanLines,
             showCnp = storeCnp,
             onDismiss = { scanResult = null; scanThumb = null },
             onUse = { ch ->
@@ -548,10 +551,10 @@ fun ClientPickerDialog(clients: List<Client>, onDismiss: () -> Unit, onPick: (Cl
         title = { Text("Alege clientul") },
         text = {
             Column {
-                OutlinedTextField(
+                CompactSearchField(
                     value = q, onValueChange = { q = it },
-                    placeholder = { Text("Caută (nume, telefon, adresă)…") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                    placeholder = "Caută (nume, telefon, adresă)",
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
                 if (list.isEmpty()) Text(
@@ -661,18 +664,13 @@ fun ClientsScreen(vm: AppViewModel, onNewWork: () -> Unit, onDeleted: (String) -
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            OutlinedTextField(
+            CompactSearchField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("Caută client (nume, telefon, e-mail, adresă)…") },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium,
-                trailingIcon = {
-                    if (query.isNotBlank()) IconButton(onClick = { query = "" }) { Text("✕", fontSize = 16.sp) }
-                },
+                placeholder = "Caută client (nume, telefon, e-mail, adresă)",
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 10.dp, end = 10.dp, top = 6.dp)
+                    .padding(start = 12.dp, end = 12.dp, top = 8.dp)
             )
             if (vm.clients.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -816,17 +814,14 @@ private fun ClientDetailDialog(
         }
     )
 
-    if (confirmDelete) AlertDialog(
-        onDismissRequest = { confirmDelete = false },
-        title = { Text("Ștergi clientul?") },
-        text = { Text("„${client.name}” dispare din listă. Lucrările lui rămân salvate, doar legătura cu fișa se pierde.") },
-        confirmButton = {
-            TextButton(
-                onClick = { confirmDelete = false; onDelete() },
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) { Text("Șterge") }
-        },
-        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Anulează") } }
+    if (confirmDelete) CountdownConfirmDialog(
+        title = "Ștergi clientul?",
+        text = "„${client.name}” dispare din listă. Lucrările lui rămân salvate, doar legătura cu fișa se pierde. " +
+            "Poți anula din bara de jos imediat după.",
+        confirmLabel = "Șterge",
+        seconds = 5,
+        onDismiss = { confirmDelete = false },
+        onConfirm = { confirmDelete = false; onDelete() }
     )
 
     AlertDialog(

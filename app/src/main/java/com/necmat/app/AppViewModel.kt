@@ -135,6 +135,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        // v1.29: necesarul rămâne în editor după salvare (o singură dată, pentru instalările vechi)
+        if (!prefs().getBoolean("clear_after_save_reset_v129", false)) {
+            if (settings.clearAfterSave) saveSettings(settings.copy(clearAfterSave = false))
+            prefs().edit().putBoolean("clear_after_save_reset_v129", true).apply()
+        }
         // jurnalul pornește primul, ca migrările să fie înregistrate
         AppLog.init(java.io.File(app.filesDir, "necmat_log.txt"))
         logEnabled = prefs().getBoolean("log_enabled", true)
@@ -404,6 +409,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             delay(300)
             Repo.save(getApplication(), categories)
         }
+    }
+
+    /** Scrie imediat pe disc ce e în așteptare (la ieșirea din aplicație). */
+    fun flush() {
+        saveJob?.cancel()
+        val cats = categories
+        viewModelScope.launch(Dispatchers.IO) { Repo.save(getApplication(), cats) }
     }
 
     private fun update(transform: (List<Category>) -> List<Category>) {
@@ -974,7 +986,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             installerCompany = p.getString("inst_company", "") ?: "",
             includeBoxesInPdf = p.getBoolean("pdf_boxes", false),
             autoAccessories = p.getBoolean("auto_acc", true),
-            clearAfterSave = p.getBoolean("clear_after_save", true),
+            clearAfterSave = p.getBoolean("clear_after_save", false),
             autoUpdateCheck = p.getBoolean("auto_update", true),
             detailExpensesInOffer = p.getBoolean("offer_detail", true),
             materialPrices = p.getBoolean("mat_prices", false),

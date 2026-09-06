@@ -29,7 +29,7 @@ object IdScanner {
     private const val MAX_PX = 2000
     private const val THUMB_PX = 720
 
-    data class Scan(val lines: List<String>, val thumbnail: Bitmap?)
+    data class Scan(val lines: List<String>, val thumbnail: Bitmap?, val result: IdScanResult = IdScanResult())
 
     /** Fișier temporar pentru camera telefonului (prin FileProvider, în cache/scans). */
     fun newCaptureUri(context: Context): Pair<Uri, File> {
@@ -45,13 +45,32 @@ object IdScanner {
         File(context.cacheDir, "scans").listFiles()?.forEach { it.delete() }
     }
 
+    /**
+     * Recunoaște textul și îl interpretează. Dacă prima trecere nu găsește
+     * niciun câmp, încearcă și imaginea rotită (poze fără orientare EXIF) și
+     * păstrează varianta cu cel mai bun rezultat.
+     */
     suspend fun scan(context: Context, uri: Uri): Scan = withContext(Dispatchers.IO) {
         val bitmap = decodeScaled(context, uri, MAX_PX) ?: return@withContext Scan(emptyList(), null)
-        val lines = try {
-            recognize(bitmap)
-        } catch (e: Exception) {
-            AppLog.e("Scan", "Recunoașterea textului a eșuat", e)
-            emptyList()
+        var lines: List<String> = emptyList()
+        var result = IdScanResult()
+        val attempts = listOf(0f, 90f, 270f, 180f)
+        for (deg in attempts) {
+            val bmp = if (deg == 0f) bitmap else rotate(bitmap, deg)
+            val l = try {
+                recognize(bmp)
+            } catch (e: Exception) {
+                AppLog.e("Scan", "Recunoașterea textului a eșuat", e)
+                emptyList()
+            }
+            val r = IdCardParser.parse(l)
+            AppLog.d("Scan", "OCR la ${deg.toInt()}°: ${l.size} linii, cnp=${r.cnpSure}, nume=${r.surname.isNotBlank()}")
+            val better = score(r, l.size) > score(result, lines.size)
+            if (better) {
+                lines = l
+                result = r
+            }
+            if (result.cnpSure && result.surname.isNotBlank()) break
         }
         val thumb = try {
             val scale = THUMB_PX.toFloat() / maxOf(bitmap.width, bitmap.height)
@@ -63,7 +82,18 @@ object IdScanner {
             null
         }
         AppLog.i("Scan", "Act scanat: ${lines.size} linii de text recunoscute")
-        Scan(lines, thumb)
+        Scan(lines, thumb, result)
+    }
+
+    /** Cât de completă e citirea: CNP validat cântărește cel mai mult, apoi numele, adresa, volumul de text. */
+    private fun score(r: IdScanResult, lineCount: Int): Int =
+        (if (r.cnpSure) 100 else if (r.cnp.isNotBlank()) 40 else 0) +
+            (if (r.surname.isNotBlank()) 30 else 0) + (if (r.givenNames.isNotBlank()) 20 else 0) +
+            (if (r.address.isNotBlank()) 10 else 0) + minOf(lineCount, 20)
+
+    private fun rotate(src: Bitmap, degrees: Float): Bitmap {
+        val m = Matrix().apply { postRotate(degrees) }
+        return Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
     }
 
     /** Decodează imaginea la cel mult [maxPx] pe latura lungă și o rotește după EXIF. */
