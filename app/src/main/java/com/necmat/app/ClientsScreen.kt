@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +41,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -286,6 +288,26 @@ fun ClientFields(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        if (clients.isNotEmpty()) {
+            var showPicker by remember { mutableStateOf(false) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = form.clientId == null,
+                    onClick = { form.unlink() },
+                    label = { Text("Client nou") }
+                )
+                FilterChip(
+                    selected = form.clientId != null,
+                    onClick = { showPicker = true },
+                    label = { Text(if (form.clientId != null) "Client existent ✓" else "Client existent…") }
+                )
+            }
+            if (showPicker) ClientPickerDialog(
+                clients = clients,
+                onDismiss = { showPicker = false },
+                onPick = { form.setFromClient(it); showPicker = false }
+            )
+        }
         OutlinedTextField(
             value = form.name, onValueChange = { form.name = it },
             label = { Text(nameLabel) },
@@ -507,6 +529,59 @@ fun ClientFormDialog(
             TextButton(onClick = { save(force = false) }, enabled = canSave) { Text("Salvează") }
         },
         dismissButton = { TextButton(onClick = { requestDismiss() }) { Text("Anulează") } }
+    )
+}
+
+/** Lista tuturor clienților, cu căutare, pentru a alege unul existent. */
+@Composable
+fun ClientPickerDialog(clients: List<Client>, onDismiss: () -> Unit, onPick: (Client) -> Unit) {
+    var q by remember { mutableStateOf("") }
+    val list = clients
+        .filter { c ->
+            q.isBlank() || normalizeName(c.name).contains(normalizeName(q)) ||
+                normalizePhone(c.phone).contains(q.filter { it.isDigit() }.ifEmpty { "§" }) ||
+                normalizeName(c.address).contains(normalizeName(q))
+        }
+        .sortedBy { normalizeName(it.name) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Alege clientul") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = q, onValueChange = { q = it },
+                    placeholder = { Text("Caută (nume, telefon, adresă)…") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                if (list.isEmpty()) Text(
+                    "Niciun client nu se potrivește.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                    items(list, key = { "pk${it.id}" }) { c ->
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(c) }
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Text(c.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            val sub = listOf(c.phone, c.locality).filter { it.isNotBlank() }.joinToString("  ·  ")
+                            if (sub.isNotEmpty()) Text(
+                                sub, style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Închide") } }
     )
 }
 

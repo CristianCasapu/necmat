@@ -604,6 +604,7 @@ fun AppointmentDialog(
     var showDate by remember { mutableStateOf(false) }
     var showTime by remember { mutableStateOf(false) }
     var showWorkPicker by remember { mutableStateOf(false) }
+    var showClientPicker by remember { mutableStateOf(false) }
     var confirmExit by remember { mutableStateOf(false) }
 
     fun build(): Appointment = initial.copy(
@@ -703,6 +704,26 @@ fun AppointmentDialog(
                     }
                 }
                 // client: sugestii din fișele existente
+                if (vm.clients.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = clientId == null,
+                        onClick = { clientId = null },
+                        label = { Text("Client nou") }
+                    )
+                    FilterChip(
+                        selected = clientId != null,
+                        onClick = { showClientPicker = true },
+                        label = { Text(if (clientId != null) "Client existent ✓" else "Client existent…") }
+                    )
+                }
+                if (showClientPicker) ClientPickerDialog(
+                    clients = vm.clients,
+                    onDismiss = { showClientPicker = false },
+                    onPick = { c ->
+                        clientId = c.id; clientName = c.name; address = c.address; phone = c.phone
+                        showClientPicker = false
+                    }
+                )
                 OutlinedTextField(
                     value = clientName, onValueChange = { clientName = it; if (clientId != null) clientId = null },
                     label = { Text("Client") }, singleLine = true, modifier = Modifier.fillMaxWidth()
