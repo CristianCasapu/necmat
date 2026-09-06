@@ -29,7 +29,10 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
   aceasta / mai târziu / trecute), avertisment la suprapuneri, stări
   (programat / confirmat / finalizat / anulat); pe fiecare programare: sună,
   confirmare prin SMS sau WhatsApp cu mesaj configurabil, navighează, adaugă
-  în calendarul telefonului, creează lucrare; din orice lucrare: „Programează”
+  în calendarul telefonului, creează lucrare; din orice lucrare: „Programează”;
+  vizualizări **Lună** (grilă cu buline pe tip, zilele pline evidențiate,
+  apăsare lungă = programare nouă), **Săptămână** (7 zile cu numărul
+  programărilor și orele ocupate) și **Agendă**
 - **PDF profesional** pentru furnizor și client: antet cu dată și referință,
   carduri Solicitant (instalator) / Beneficiar (client), tabel
   (Nr. / Denumire / Cant. / UM / P.U. / Valoare) cu marca pe fiecare categorie,

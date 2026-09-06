@@ -1,6 +1,6 @@
 # Plan funcții noi: Materiale existente la client · Clienți · Scanare buletin · Calendar și programări
 
-Stare: **în lucru** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23; Etapa 1 livrată în v1.24 (Setările au trecut în meniul ⋮ cât timp tab-ul Calendar e activ).
+Stare: **etapele obligatorii livrate (M, 0, S, 1, 2)** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23; Etapa 1 livrată în v1.24 (Setările au trecut în meniul ⋮ cât timp tab-ul Calendar e activ); Etapa 2 livrată în v1.25. Rămân opționale: 3 (notificări proprii) și 4 (rafinări).
 Fiecare etapă = o versiune publicată separat (teste → build → bump → commit → release),
 ca să poți folosi și testa pe teren fiecare bucată înainte de următoarea.
 
@@ -271,23 +271,23 @@ Aici apare valoarea reală: știi unde trebuie să fii și când.
 
 ---
 
-## Etapa 2 — Vizualizare lunară și săptămânală (v1.25)
+## Etapa 2 — Vizualizare lunară și săptămânală (v1.25) — ✅ livrată 2026-09-06
 
 **Logică pură** (`Calendar.kt`)
-- [ ] `monthGrid(YearMonth, firstDayOfWeek = MONDAY)` → 6 rânduri × 7 zile, cu zilele din
+- [x] `monthGrid(YearMonth, firstDayOfWeek = MONDAY)` → 6 rânduri × 7 zile, cu zilele din
       lunile vecine gri; număr programări per zi și tipul dominant (pentru buline colorate)
-- [ ] `weekOf(LocalDate)` → 7 zile cu programările fiecăreia
+- [x] `weekOf(LocalDate)` → 7 zile cu programările fiecăreia
 
 **UI**
-- [ ] Comutator sus în tab Calendar: **Lună · Săptămână · Agendă** (se reține ultima alegere)
-- [ ] Lună: grilă 7 coloane, săgeți ‹ ›, buton „Azi”, buline per zi; apăsare pe zi → lista zilei
+- [x] Comutator sus în tab Calendar: **Lună · Săptămână · Agendă** (se reține ultima alegere)
+- [x] Lună: grilă 7 coloane, săgeți ‹ ›, buton „Azi”, buline per zi; apăsare pe zi → lista zilei
       dedesubt; apăsare lungă → programare nouă în ziua aceea
-- [ ] Săptămână: 7 coloane cu carduri compacte (oră + client), scroll orizontal la nevoie
-- [ ] Zilele libere / zilele cu program complet (peste X ore) evidențiate discret
+- [x] Săptămână: 7 coloane cu carduri compacte (oră + client), scroll orizontal la nevoie
+- [x] Zilele libere / zilele cu program complet (peste X ore) evidențiate discret
 
 **Teste** (`V25Test.kt`)
-- [ ] grilă pentru februarie an bisect, lună care începe duminica, decembrie → ianuarie
-- [ ] numărul de programări per zi în grilă, inclusiv cele „toată ziua”
+- [x] grilă pentru februarie an bisect, lună care începe duminica, decembrie → ianuarie
+- [x] numărul de programări per zi în grilă, inclusiv cele „toată ziua”
 
 ---
 

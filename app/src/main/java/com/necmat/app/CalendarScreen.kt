@@ -7,6 +7,7 @@ import android.provider.CalendarContract
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +69,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.time.YearMonth
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -138,86 +141,174 @@ fun CalendarScreen(vm: AppViewModel, onCreateWork: () -> Unit, onDeleted: (Strin
     var deleting by remember { mutableStateOf<Appointment?>(null) }
     var expandedId by remember { mutableStateOf<Long?>(null) }
     val now = System.currentTimeMillis()
+    val today = toLocalDate(now)
     val groups = groupForAgenda(vm.appointments, now)
     val next = nextUpcoming(vm.appointments, now)
+    val view = vm.calendarView
+    var selectedDay by remember { mutableStateOf(today) }
+    var month by remember { mutableStateOf(YearMonth.from(today)) }
+    var weekAnchor by remember { mutableStateOf(today) }
+    fun newOn(day: LocalDate) {
+        creating = Appointment(
+            0L, "", epochOf(day, LocalTime.of(9, 0)), vm.settings.defaultDurationMin,
+            type = AppointmentType.VIZITA
+        )
+    }
 
-    Box(Modifier.fillMaxSize()) {
-        if (vm.appointments.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    @Composable
+    fun dayList(day: LocalDate) {
+        val list = appointmentsOn(vm.appointments, day)
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 88.dp)
+        ) {
+            item(key = "dh") {
                 Text(
-                    "Nicio programare.\nApasă + pentru o vizită, o ofertă sau o zi de execuție.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(24.dp)
+                    formatDayLong(day, today) + if (list.isEmpty()) " — nicio programare"
+                    else " — ${list.size} ${if (list.size == 1) "programare" else "programări"}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 6.dp)
                 )
             }
-        } else LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 88.dp)
-        ) {
-            if (next != null) item(key = "next") {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp)
-                ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Text("Următoarea programare", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text(
-                            buildString {
-                                val d = toLocalDate(next.start)
-                                append(
-                                    when (d) {
-                                        toLocalDate(now) -> "Azi"
-                                        toLocalDate(now).plusDays(1) -> "Mâine"
-                                        else -> formatDayLong(d, toLocalDate(now))
-                                    }
-                                )
-                                append(" · ").append(next.timeLabel())
-                                if (next.clientName.isNotBlank()) append(" · ").append(next.clientName)
-                            },
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        if (next.address.isNotBlank()) Text(
-                            next.address, style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis
-                        )
+            items(list, key = { "d${it.id}" }) { a ->
+                AppointmentCard(
+                    vm = vm, a = a, now = now,
+                    expanded = expandedId == a.id,
+                    showDay = false,
+                    onToggle = { expandedId = if (expandedId == a.id) null else a.id },
+                    onEdit = { editing = a },
+                    onDelete = { deleting = a },
+                    onCreateWork = {
+                        val c = a.clientId?.let { id -> vm.clients.firstOrNull { it.id == id } }
+                            ?: Client(0L, a.clientName, a.phone, a.address)
+                        vm.prefillNextWork(c)
+                        onCreateWork()
                     }
+                )
+            }
+            if (list.isEmpty()) item(key = "dempty") {
+                TextButton(onClick = { newOn(day) }) { Text("+ Programare în această zi") }
+            }
+        }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CalendarView.entries.forEach { v ->
+                    FilterChip(
+                        selected = view == v,
+                        onClick = { vm.selectCalendarView(v) },
+                        label = { Text(v.label) }
+                    )
                 }
             }
-            groups.forEach { (bucket, list) ->
-                item(key = "h${bucket.name}") {
-                    Text(
-                        "${bucket.label} (${list.size})",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (bucket == AgendaBucket.OVERDUE) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                    )
-                }
-                items(list, key = { "a${it.id}" }) { a ->
-                    AppointmentCard(
-                        vm = vm, a = a, now = now,
-                        expanded = expandedId == a.id,
-                        showDay = true,
-                        onToggle = { expandedId = if (expandedId == a.id) null else a.id },
-                        onEdit = { editing = a },
-                        onDelete = { deleting = a },
-                        onCreateWork = {
-                            val c = a.clientId?.let { id -> vm.clients.firstOrNull { it.id == id } }
-                                ?: Client(0L, a.clientName, a.phone, a.address)
-                            vm.prefillNextWork(c)
-                            onCreateWork()
+            when (view) {
+                CalendarView.AGENDA -> {
+                    if (vm.appointments.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                "Nicio programare.\nApasă + pentru o vizită, o ofertă sau o zi de execuție.",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(24.dp)
+                            )
                         }
+                    } else LazyColumn(
+                        Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 88.dp)
+                    ) {
+                        if (next != null) item(key = "next") {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 10.dp)
+                            ) {
+                                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                    Text("Următoarea programare", style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    Text(
+                                        buildString {
+                                            val d = toLocalDate(next.start)
+                                            append(
+                                                when (d) {
+                                                    toLocalDate(now) -> "Azi"
+                                                    toLocalDate(now).plusDays(1) -> "Mâine"
+                                                    else -> formatDayLong(d, toLocalDate(now))
+                                                }
+                                            )
+                                            append(" · ").append(next.timeLabel())
+                                            if (next.clientName.isNotBlank()) append(" · ").append(next.clientName)
+                                        },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    if (next.address.isNotBlank()) Text(
+                                        next.address, style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                        groups.forEach { (bucket, list) ->
+                            item(key = "h${bucket.name}") {
+                                Text(
+                                    "${bucket.label} (${list.size})",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (bucket == AgendaBucket.OVERDUE) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                )
+                            }
+                            items(list, key = { "a${it.id}" }) { a ->
+                                AppointmentCard(
+                                    vm = vm, a = a, now = now,
+                                    expanded = expandedId == a.id,
+                                    showDay = true,
+                                    onToggle = { expandedId = if (expandedId == a.id) null else a.id },
+                                    onEdit = { editing = a },
+                                    onDelete = { deleting = a },
+                                    onCreateWork = {
+                                        val c = a.clientId?.let { id -> vm.clients.firstOrNull { it.id == id } }
+                                            ?: Client(0L, a.clientName, a.phone, a.address)
+                                        vm.prefillNextWork(c)
+                                        onCreateWork()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                CalendarView.MONTH -> {
+                    MonthView(
+                        vm = vm, month = month, selected = selectedDay, today = today,
+                        onMonthChange = { month = it },
+                        onSelect = { selectedDay = it; month = YearMonth.from(it) },
+                        onNewOn = { newOn(it) }
                     )
+                    dayList(selectedDay)
+                }
+                CalendarView.WEEK -> {
+                    WeekView(
+                        vm = vm, anchor = weekAnchor, selected = selectedDay, today = today,
+                        onAnchorChange = { weekAnchor = it },
+                        onSelect = { selectedDay = it; weekAnchor = it },
+                        onNewOn = { newOn(it) }
+                    )
+                    dayList(selectedDay)
                 }
             }
         }
@@ -568,4 +659,168 @@ fun AppointmentDialog(
         },
         dismissButton = { TextButton(onClick = { requestDismiss() }) { Text("Anulează") } }
     )
+}
+
+
+// ------------------------------------------------------------------ vizualizări Lună / Săptămână (v1.25)
+
+private val dowShort = listOf("Lu", "Ma", "Mi", "Jo", "Vi", "Sâ", "Du")
+
+/** Grila lunară: buline colorate pe tip, ziua de azi și ziua aleasă evidențiate. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun MonthView(
+    vm: AppViewModel,
+    month: java.time.YearMonth,
+    selected: LocalDate,
+    today: LocalDate,
+    onMonthChange: (java.time.YearMonth) -> Unit,
+    onSelect: (LocalDate) -> Unit,
+    onNewOn: (LocalDate) -> Unit
+) {
+    val grid = monthGrid(month)
+    val summaries = daySummaries(vm.appointments, grid.flatten())
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { onMonthChange(month.minusMonths(1)) }) { Text("‹", style = MaterialTheme.typography.titleLarge) }
+            Text(
+                "${monthLabel(month.monthValue).replaceFirstChar { it.uppercase() }} ${month.year}",
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center, modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { onMonthChange(java.time.YearMonth.from(today)); onSelect(today) }) { Text("Azi") }
+            TextButton(onClick = { onMonthChange(month.plusMonths(1)) }) { Text("›", style = MaterialTheme.typography.titleLarge) }
+        }
+        Row(Modifier.fillMaxWidth()) {
+            dowShort.forEach { d ->
+                Text(
+                    d, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        grid.forEach { week ->
+            Row(Modifier.fillMaxWidth()) {
+                week.forEach { day ->
+                    val inMonth = day.monthValue == month.monthValue
+                    val s = summaries[day]
+                    val isSel = day == selected
+                    val isToday = day == today
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .padding(2.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                when {
+                                    isSel -> MaterialTheme.colorScheme.primaryContainer
+                                    s?.isFull == true -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                                    else -> Color.Transparent
+                                }
+                            )
+                            .combinedClickable(onClick = { onSelect(day) }, onLongClick = { onNewOn(day) })
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                "${day.dayOfMonth}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
+                                color = when {
+                                    isToday -> MaterialTheme.colorScheme.primary
+                                    inMonth -> MaterialTheme.colorScheme.onSurface
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                                }
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.height(6.dp)) {
+                                if (s != null) {
+                                    val dot = typeColor(s.dominant ?: AppointmentType.ALTELE)
+                                    repeat(minOf(s.count, 3)) {
+                                        Box(Modifier.size(5.dp).clip(RoundedCornerShape(50)).background(dot))
+                                    }
+                                    if (s.count > 3) Text("+", style = MaterialTheme.typography.labelSmall, color = dot)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Text(
+            "Apasă o zi pentru programările ei · ține apăsat pentru o programare nouă în ziua aceea",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
+        )
+    }
+}
+
+/** Banda săptămânii: 7 coloane cu ziua, numărul programărilor și minutele ocupate. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun WeekView(
+    vm: AppViewModel,
+    anchor: LocalDate,
+    selected: LocalDate,
+    today: LocalDate,
+    onAnchorChange: (LocalDate) -> Unit,
+    onSelect: (LocalDate) -> Unit,
+    onNewOn: (LocalDate) -> Unit
+) {
+    val days = weekOf(anchor)
+    val summaries = daySummaries(vm.appointments, days)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { onAnchorChange(anchor.minusWeeks(1)) }) { Text("‹", style = MaterialTheme.typography.titleLarge) }
+            Text(
+                "${days.first().dayOfMonth} ${monthLabel(days.first().monthValue)} – " +
+                    "${days.last().dayOfMonth} ${monthLabel(days.last().monthValue)} ${days.last().year}",
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center, modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { onAnchorChange(today); onSelect(today) }) { Text("Azi") }
+            TextButton(onClick = { onAnchorChange(anchor.plusWeeks(1)) }) { Text("›", style = MaterialTheme.typography.titleLarge) }
+        }
+        Row(Modifier.fillMaxWidth()) {
+            days.forEachIndexed { i, day ->
+                val s = summaries[day]
+                val isSel = day == selected
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(2.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            when {
+                                isSel -> MaterialTheme.colorScheme.primaryContainer
+                                s?.isFull == true -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            }
+                        )
+                        .combinedClickable(onClick = { onSelect(day) }, onLongClick = { onNewOn(day) })
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(dowShort[i], style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "${day.dayOfMonth}", style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (day == today) FontWeight.Bold else FontWeight.Normal,
+                        color = if (day == today) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        when {
+                            s == null -> "liber"
+                            s.busyMinutes >= 60 -> "${s.count} · ${s.busyMinutes / 60}h"
+                            else -> "${s.count} · ${s.busyMinutes}m"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (s == null) MaterialTheme.colorScheme.onSurfaceVariant
+                        else typeColor(s.dominant ?: AppointmentType.ALTELE)
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+    }
 }

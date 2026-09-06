@@ -73,6 +73,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var appointments by mutableStateOf(AppointmentsRepo.load(app))
         private set
 
+    /** Vizualizarea aleasă în Calendar (Lună / Săptămână / Agendă), reținută între porniri. */
+    var calendarView by mutableStateOf(CalendarView.parse(prefs().getString("cal_view", null)))
+        private set
+
+    fun selectCalendarView(v: CalendarView) {
+        calendarView = v
+        prefs().edit().putString("cal_view", v.name).apply()
+    }
+
     var themeMode by mutableStateOf(loadTheme())
         private set
 

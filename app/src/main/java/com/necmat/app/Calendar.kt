@@ -185,6 +185,57 @@ fun confirmationMessage(template: String, a: Appointment, installer: String): St
         .trim()
 }
 
+// ------------------------------------------------------------------ vizualizări lună / săptămână (v1.25)
+
+enum class CalendarView(val label: String) {
+    MONTH("Lună"),
+    WEEK("Săptămână"),
+    AGENDA("Agendă");
+
+    companion object {
+        fun parse(s: String?): CalendarView = entries.firstOrNull { it.name == s } ?: AGENDA
+    }
+}
+
+/**
+ * Grila lunii: 6 rânduri × 7 zile, începând cu prima zi a săptămânii
+ * (implicit luni), cu zilele din lunile vecine incluse pentru completare.
+ */
+fun monthGrid(month: java.time.YearMonth, firstDay: DayOfWeek = DayOfWeek.MONDAY): List<List<LocalDate>> {
+    val first = month.atDay(1)
+    val offset = (first.dayOfWeek.value - firstDay.value + 7) % 7
+    val start = first.minusDays(offset.toLong())
+    return (0 until 6).map { row -> (0 until 7).map { col -> start.plusDays((row * 7 + col).toLong()) } }
+}
+
+/** Cele 7 zile ale săptămânii care conține data (luni → duminică). */
+fun weekOf(date: LocalDate, firstDay: DayOfWeek = DayOfWeek.MONDAY): List<LocalDate> {
+    val offset = (date.dayOfWeek.value - firstDay.value + 7) % 7
+    val start = date.minusDays(offset.toLong())
+    return (0 until 7).map { start.plusDays(it.toLong()) }
+}
+
+/** Rezumatul unei zile pentru grilă: câte programări active, tipul dominant, minute ocupate. */
+data class DaySummary(val count: Int, val dominant: AppointmentType?, val busyMinutes: Int) {
+    /** Peste 8 ore programate = zi plină. */
+    val isFull: Boolean get() = busyMinutes >= 8 * 60
+}
+
+fun daySummaries(list: List<Appointment>, days: Collection<LocalDate>): Map<LocalDate, DaySummary> {
+    val wanted = days.toSet()
+    val byDay = linkedMapOf<LocalDate, MutableList<Appointment>>()
+    list.forEach { a ->
+        if (!a.isActive) return@forEach
+        val d = toLocalDate(a.start)
+        if (d in wanted) byDay.getOrPut(d) { mutableListOf() } += a
+    }
+    return byDay.mapValues { (_, l) ->
+        val dominant = l.groupingBy { it.type }.eachCount().maxByOrNull { it.value }?.key
+        val busy = l.sumOf { if (it.allDay) 8 * 60 else it.durationMin }
+        DaySummary(l.size, dominant, busy)
+    }
+}
+
 // ------------------------------------------------------------------ persistență
 
 object AppointmentsRepo {
