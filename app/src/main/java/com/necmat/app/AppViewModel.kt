@@ -282,11 +282,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Id-ul clientului pentru o lucrare: cel ales în formular, altfel un client
      * existent cu același telefon / nume + adresă, altfel unul nou din datele lucrării.
      */
-    private fun resolveClientId(client: String, phone: String, address: String, clientId: Long?): Long? {
-        if (clientId != null && clients.any { it.id == clientId }) return clientId
-        if (client.isBlank() && phone.isBlank()) return null
-        val probe = Client(0L, client.trim(), phone.trim(), address.trim())
-        findDuplicateClient(probe, clients)?.let { return it.id }
+    private fun resolveClientId(
+        client: String, phone: String, address: String, clientId: Long?, cnp: String = ""
+    ): Long? {
+        val existingId = when {
+            clientId != null && clients.any { it.id == clientId } -> clientId
+            client.isBlank() && phone.isBlank() -> return null
+            else -> findDuplicateClient(Client(0L, client.trim(), phone.trim(), address.trim()), clients)?.id
+        }
+        if (existingId != null) {
+            // CNP-ul citit de pe act completează fișa existentă, dacă era goală
+            val existing = clients.first { it.id == existingId }
+            if (cnp.isNotBlank() && settings.storeCnp && existing.cnp.isBlank() && isValidCnp(cnp)) {
+                upsertClient(existing.copy(cnp = cnp))
+            }
+            return existingId
+        }
+        val probe = Client(0L, client.trim(), phone.trim(), address.trim(), cnp = cnp.trim())
         return upsertClient(probe.copy(name = probe.name.ifBlank { "Client fără nume" })).id
     }
 
@@ -554,9 +566,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         address: String,
         phone: String,
         overwriteId: Long? = null,
-        clientId: Long? = null
+        clientId: Long? = null,
+        cnp: String = ""
     ): Boolean {
-        val cid = resolveClientId(client, phone, address, clientId)
+        val cid = resolveClientId(client, phone, address, clientId, cnp)
         val w = snapshot(name, client, address, phone, cid)
         if (w.categories.isEmpty()) return false
         works = replaceWork(works, w, overwriteId)

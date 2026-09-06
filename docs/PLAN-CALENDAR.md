@@ -1,6 +1,6 @@
 # Plan funcții noi: Materiale existente la client · Clienți · Scanare buletin · Calendar și programări
 
-Stare: **în lucru** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22.
+Stare: **în lucru** — scrisă 2026-09-06 pornind de la v1.20; Etapa M livrată în v1.21 (împreună cu reproiectarea PDF-urilor); Etapa 0 livrată în v1.22; Etapa S livrată în v1.23.
 Fiecare etapă = o versiune publicată separat (teste → build → bump → commit → release),
 ca să poți folosi și testa pe teren fiecare bucată înainte de următoarea.
 
@@ -34,7 +34,7 @@ e independentă de calendar, e cea mai mică și aduce câștig imediat la fieca
 | Unde apare calendarul | Al 5-lea tab în bara de jos: **Necesar · Sumar · Lucrări · Calendar · Setări** | Material3 permite 3–5 taburi; calendarul e folosit zilnic, merită acces direct |
 | Unde apar clienții | **Pagină proprie „Clienți”**, tab în bara de jos | Cerință: pagină de administrare cu adăugare / editare / ștergere |
 | Bara de jos cu 6 ecrane | Bara devine **Necesar · Sumar · Lucrări · Clienți · Calendar**; **Setări** se mută în meniul ⋮ din dreapta-sus (unde sunt deja acțiunile rare) | Material3 recomandă maxim 5 taburi; Setările se deschid rar, Clienții și Calendarul zilnic. Alternativă dacă nu-ți place: Calendar în meniul ⋮ în loc de Setări |
-| Recunoaștere text (OCR) | **ML Kit Text Recognition** (Google, rulează pe telefon, model latin inclus în APK, ~4–5 MB în plus) | Singura opțiune matură fără server; funcționează offline; nu trimite imaginea nicăieri |
+| Recunoaștere text (OCR) | **ML Kit Text Recognition** (Google, rulează pe telefon, model latin inclus în APK; ~14 MB pe arm64, ~45 MB universal) | Singura opțiune matură fără server; funcționează offline; nu trimite imaginea nicăieri |
 | CNP | Se salvează doar local, în fișa clientului; **nu** intră niciodată în PDF sau în textul de Copiază/Trimite; în listă apare mascat (`•••••••••1234`); setare „Salvează CNP-ul” (implicit pornit) | E dată cu caracter special în România; o ținem doar cât e nevoie și doar pe telefon |
 | Ascundere | Setare „Arată calendarul” (implicit pornit) | Regula ta: nu ștergem funcții, doar ascundem din setări |
 | Client separat sau text liber | Entitate `Client` separată, cu istoric | Altfel nu poți vedea „ce am făcut la Popescu” sau reprograma din 2 apăsări |
@@ -171,7 +171,7 @@ Fundația pentru scanare, programări și agenda telefonului. Fără ea, fiecare
 
 ---
 
-## Etapa S — Scanare act de identitate (v1.23)
+## Etapa S — Scanare act de identitate (v1.23) — ✅ livrată 2026-09-06
 
 **Scop**: dintr-o poză sau un fișier imagine cu buletinul, aplicația completează singură **nume, prenume, CNP**
 și, la cartea veche, **adresa de domiciliu** (pusă în adresa lucrării / clientului). Tu verifici și confirmi.
@@ -188,48 +188,48 @@ Fundația pentru scanare, programări și agenda telefonului. Fără ea, fiecare
 | MRZ | pe verso (3 linii) — opțional, dacă fotografiezi și spatele | 2 linii × 36 caractere pe față: linia 1 `IDROU` + NUME`<<`PRENUME`<`PRENUME; linia 2 conține data nașterii, sexul și cifrele CNP-ului |
 
 **Strategia parserului** (`IdCardParser.kt`, funcție pură `parse(lines: List<String>): IdScanResult`)
-- [ ] **Ancora principală = CNP-ul**: orice grup de 13 cifre care trece cifra de control (ponderi `279146358279`)
+- [x] **Ancora principală = CNP-ul**: orice grup de 13 cifre care trece cifra de control (ponderi `279146358279`)
       e CNP-ul, indiferent unde apare; dacă apar mai multe, se preferă cel de lângă eticheta `CNP`
-- [ ] **MRZ ca a doua sursă**: dacă există o linie care începe cu `IDROU`, numele = ce e înainte de `<<`,
+- [x] **MRZ ca a doua sursă**: dacă există o linie care începe cu `IDROU`, numele = ce e înainte de `<<`,
       prenumele = ce e după (`<` → spațiu); din linia 2 se reconstruiește CNP-ul (cifra de sex + data nașterii +
       cele 6 cifre din câmpul opțional de la coadă) și se validează cu cifra de control. MRZ-ul e citit foarte bine
       de OCR (font monospațiat), deci confirmă sau corectează câmpurile tipărite
-- [ ] Nume și prenume: linia imediat următoare etichetei (căutare tolerantă: `Nume`, `Surname`, `Prenume`,
+- [x] Nume și prenume: linia imediat următoare etichetei (căutare tolerantă: `Nume`, `Surname`, `Prenume`,
       `Given`, `First name`); dacă tipăritul și MRZ-ul diferă, câștigă tipăritul pentru cratime și diacritice,
       MRZ-ul pentru litere lipsă
-- [ ] Adresă: liniile dintre `Domiciliu` și `Emis` / `Valabilitate`; se curăță prefixele (`Jud.`, `Loc.`, `Mun.`, `Str.`)
+- [x] Adresă: liniile dintre `Domiciliu` și `Emis` / `Valabilitate`; se curăță prefixele (`Jud.`, `Loc.`, `Mun.`, `Str.`)
       într-o formă lizibilă: `Str. Exemplu nr. 8, Loc. Exemplu (Mun. Exemplu), jud. DJ`
-- [ ] Normalizare: numele ies din OCR cu majuscule → le transformăm în „Nume Prenume-Prenume” (prima literă mare,
+- [x] Normalizare: numele ies din OCR cu majuscule → le transformăm în „Nume Prenume-Prenume” (prima literă mare,
       cratima păstrată); confuzii tipice OCR corectate în CNP (`O`→`0`, `I`/`l`→`1`, `S`→`5`, `B`→`8`) înainte de validare
-- [ ] Rezultatul are și un **grad de încredere** per câmp (ex. CNP validat = sigur; nume doar din tipărit = de verificat),
+- [x] Rezultatul are și un **grad de încredere** per câmp (ex. CNP validat = sigur; nume doar din tipărit = de verificat),
       afișat în dialogul de confirmare
 
 **Captura imaginii** (`IdScanner.kt`)
-- [ ] Două butoane în `ClientForm` (deci și în lucrare, și în pagina Clienți): **„Fotografiază buletinul”**
+- [x] Două butoane în `ClientForm` (deci și în lucrare, și în pagina Clienți): **„Fotografiază buletinul”**
       (`TakePicture` prin aplicația de cameră a telefonului, în fișier temporar prin `FileProvider`-ul existent —
       **fără permisiunea CAMERA**) și **„Din imagine”** (`PickVisualMedia` — fără permisiune de stocare)
-- [ ] Imaginea se redimensionează la max. 2000 px pe latura lungă, se rotește după EXIF, se trimite la ML Kit,
+- [x] Imaginea se redimensionează la max. 2000 px pe latura lungă, se rotește după EXIF, se trimite la ML Kit,
       apoi **fișierul temporar se șterge**; imaginea nu se salvează în aplicație și nu pleacă de pe telefon
-- [ ] Dialog de confirmare: miniatura pozei + câmpurile recunoscute editabile (nume, prenume, CNP, adresă), cu marcaj
+- [x] Dialog de confirmare: miniatura pozei + câmpurile recunoscute editabile (nume, prenume, CNP, adresă), cu marcaj
       „✓ verificat” / „? verifică” per câmp; abia la „Folosește” se completează formularul
-- [ ] Dacă nu se găsește niciun CNP valid: mesaj „Nu am putut citi actul — încearcă o poză mai dreaptă, fără reflexii”
+- [x] Dacă nu se găsește niciun CNP valid: mesaj „Nu am putut citi actul — încearcă o poză mai dreaptă, fără reflexii”
       și posibilitatea de a păstra ce s-a citit parțial
-- [ ] Sfaturi scurte în dialog: act pe fundal închis, fără blitz, cadru complet
+- [x] Sfaturi scurte în dialog: act pe fundal închis, fără blitz, cadru complet
 
 **Dependență și build**
-- [ ] `com.google.mlkit:text-recognition:16.0.1` (varianta cu model inclus; merge și pe telefoane fără Google Play,
-      deci și pentru flavour-ul `github`); APK crește cu ~4–5 MB
-- [ ] `PRIVACY.md` + declarația din Play Console: procesare pe dispozitiv, fără transmitere, imaginea nu e stocată
+- [x] `com.google.mlkit:text-recognition:16.0.1` (varianta cu model inclus; merge și pe telefoane fără Google Play,
+      deci și pentru flavour-ul `github`); APK-ul crește la ~14 MB (arm64 doar; universal ar fi ~45 MB)
+- [x] `PRIVACY.md` + declarația din Play Console: procesare pe dispozitiv, fără transmitere, imaginea nu e stocată
 
 **Teste** (`V23Test.kt`) — cu **date fictive**, niciodată cu acte reale
-- [ ] CNP: generator de CNP-uri fictive valide pentru teste; corecție `O→0`, `I→1`; respingere CNP cu cifra de control greșită
-- [ ] format nou: liniile OCR simulate (`Nume / Surname`, `POPESCU`, `Prenume / Given names`, `ION-ANDREI`, `CNP / PIN`,
+- [x] CNP: generator de CNP-uri fictive valide pentru teste; corecție `O→0`, `I→1`; respingere CNP cu cifra de control greșită
+- [x] format nou: liniile OCR simulate (`Nume / Surname`, `POPESCU`, `Prenume / Given names`, `ION-ANDREI`, `CNP / PIN`,
       `1xxxxxxxxxxxx`) → nume, prenume cu cratimă, CNP; adresă goală
-- [ ] format vechi: liniile OCR simulate cu domiciliu pe două rânduri + MRZ → adresă curățată, CNP din tipărit = CNP din MRZ
-- [ ] MRZ singur (tipăritul nu s-a citit): nume/prenume din linia 1, CNP reconstruit din linia 2, validat
-- [ ] tipărit vs MRZ în conflict (o literă lipsă) → se alege varianta consistentă cu MRZ, câmpul marcat „verifică”
-- [ ] ordine amestecată a liniilor (OCR-ul poate întoarce blocurile în altă ordine) → același rezultat
-- [ ] text fără nicio ancoră → rezultat gol, fără excepție
+- [x] format vechi: liniile OCR simulate cu domiciliu pe două rânduri + MRZ → adresă curățată, CNP din tipărit = CNP din MRZ
+- [x] MRZ singur (tipăritul nu s-a citit): nume/prenume din linia 1, CNP reconstruit din linia 2, validat
+- [x] tipărit vs MRZ în conflict (o literă lipsă) → se alege varianta consistentă cu MRZ, câmpul marcat „verifică”
+- [x] ordine amestecată a liniilor (OCR-ul poate întoarce blocurile în altă ordine) → același rezultat
+- [x] text fără nicio ancoră → rezultat gol, fără excepție
 
 ---
 

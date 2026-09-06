@@ -18,6 +18,11 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
   lucrărilor, „Lucrare nouă pentru acest client” și „Salvează în agenda
   telefonului”; același formular e folosit și la salvarea lucrării, cu sugestii
   din clienții existenți
+- **Scanarea buletinului** (poză sau imagine din galerie): recunoaștere de
+  text offline pe telefon (ML Kit), CNP validat prin cifra de control, nume și
+  prenume de sub etichete sau din zona MRZ, adresa de domiciliu de pe cartea
+  veche; totul apare într-un dialog de confirmare, editabil, înainte de a
+  completa formularul. Poza nu se păstrează
 - **PDF profesional** pentru furnizor și client: antet cu dată și referință,
   carduri Solicitant (instalator) / Beneficiar (client), tabel
   (Nr. / Denumire / Cant. / UM / P.U. / Valoare) cu marca pe fiecare categorie,

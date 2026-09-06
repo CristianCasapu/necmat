@@ -2,10 +2,12 @@ package com.necmat.app
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.ContactsContract
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -193,7 +195,97 @@ fun ClientFields(
         }
     }
 
+    // ---- scanarea actului de identitate (ML Kit, offline, pe dispozitiv) ----
+    var scanBusy by remember { mutableStateOf(false) }
+    var scanResult by remember { mutableStateOf<IdScanResult?>(null) }
+    var scanThumb by remember { mutableStateOf<Bitmap?>(null) }
+    var captureUri by remember { mutableStateOf<Uri?>(null) }
+
+    fun runScan(uri: Uri) {
+        if (scanBusy) return
+        scanBusy = true
+        scope.launch {
+            val scan = try {
+                IdScanner.scan(context, uri)
+            } catch (e: Exception) {
+                AppLog.e("Scan", "Eroare la scanarea actului", e)
+                IdScanner.Scan(emptyList(), null)
+            }
+            IdScanner.cleanup(context)
+            scanBusy = false
+            if (scan.lines.isEmpty()) {
+                Toast.makeText(
+                    context, "Nu am putut citi imaginea — încearcă o poză mai clară", Toast.LENGTH_LONG
+                ).show()
+            } else {
+                scanResult = IdCardParser.parse(scan.lines)
+                scanThumb = scan.thumbnail
+            }
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { ok ->
+        val u = captureUri
+        if (ok && u != null) runScan(u) else IdScanner.cleanup(context)
+    }
+    val imageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> if (uri != null) runScan(uri) }
+
+    scanResult?.let { r ->
+        IdScanConfirmDialog(
+            result = r,
+            thumbnail = scanThumb,
+            showCnp = storeCnp,
+            onDismiss = { scanResult = null; scanThumb = null },
+            onUse = { ch ->
+                if (ch.name.isNotBlank()) form.name = ch.name
+                if (ch.address.isNotBlank()) form.address = ch.address
+                if (ch.cnp.isNotBlank()) form.cnp = ch.cnp
+                scanResult = null
+                scanThumb = null
+            }
+        )
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(
+                onClick = {
+                    try {
+                        val (u, _) = IdScanner.newCaptureUri(context)
+                        captureUri = u
+                        cameraLauncher.launch(u)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Camera nu e disponibilă", Toast.LENGTH_LONG).show()
+                    }
+                },
+                enabled = !scanBusy,
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                modifier = Modifier.weight(1f)
+            ) { Text("📷 Scanează buletinul", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            OutlinedButton(
+                onClick = {
+                    imageLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                enabled = !scanBusy,
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                modifier = Modifier.weight(1f)
+            ) { Text("🖼 Din imagine", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        if (scanBusy) Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Se citește actul… (pe telefon, fără internet)",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         OutlinedTextField(
             value = form.name, onValueChange = { form.name = it },
             label = { Text(nameLabel) },

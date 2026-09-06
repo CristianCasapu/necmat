@@ -19,8 +19,8 @@ android {
         applicationId = "com.necmat.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 23
-        versionName = "1.22"
+        versionCode = 24
+        versionName = "1.23"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -31,6 +31,9 @@ android {
         create("github") {
             dimension = "dist"
             isDefault = true
+            // APK-ul universal ar avea ~45 MB din cauza bibliotecilor native ML Kit
+            // pentru 4 arhitecturi; telefoanele actuale sunt arm64 → ~12 MB.
+            ndk { abiFilters += listOf("arm64-v8a") }
         }
         create("play") {
             dimension = "dist"
@@ -75,6 +78,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    // recunoaștere de text pe dispozitiv (scanarea actului de identitate), model latin inclus în APK
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     testImplementation("junit:junit:4.13.2")
     // implementarea reală org.json pentru testele locale (în android.jar e mock-uită)
     testImplementation("org.json:json:20240303")

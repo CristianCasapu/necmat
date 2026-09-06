@@ -1017,7 +1017,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
         onDismiss = { showSave = false },
         onConfirm = { d ->
             showSave = false
-            if (vm.saveWork(d.name, d.client, d.address, d.phone, d.overwriteId, d.clientId)) {
+            if (vm.saveWork(d.name, d.client, d.address, d.phone, d.overwriteId, d.clientId, d.cnp)) {
                 Toast.makeText(
                     context,
                     if (d.overwriteId != null) "Lucrare actualizată: ${d.name}"
@@ -1060,7 +1060,9 @@ internal data class WorkDetails(
     val address: String,
     val phone: String,
     val overwriteId: Long?,
-    val clientId: Long?
+    val clientId: Long?,
+    /** CNP citit de pe act (opțional) — ajunge doar în fișa clientului, nu în lucrare. */
+    val cnp: String = ""
 )
 
 @Composable
@@ -1213,7 +1215,7 @@ private fun WorkDetailsDialog(
             TextButton(
                 onClick = {
                     if (name.isNotBlank()) onConfirm(
-                        WorkDetails(name, form.name, form.address, form.phone, overwriteId, form.clientId)
+                        WorkDetails(name, form.name, form.address, form.phone, overwriteId, form.clientId, form.cnp)
                     )
                 },
                 enabled = name.isNotBlank()

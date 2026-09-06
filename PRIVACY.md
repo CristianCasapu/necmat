@@ -17,6 +17,13 @@ personale sau de utilizare.
   de utilizator.
 - PDF-urile și fișierele de backup sunt create local și părăsesc dispozitivul
   doar dacă alegeți explicit să le partajați.
+- **Scanarea actului de identitate** (opțională) se face integral pe
+  dispozitiv, cu recunoaștere de text offline (ML Kit). Fotografia este
+  procesată în memorie și ștearsă imediat; nu este salvată și nu este
+  transmisă nicăieri. Datele recunoscute (nume, adresă, CNP) ajung doar în
+  fișa clientului de pe telefon, după ce le confirmați; CNP-ul nu apare
+  niciodată în PDF-uri sau în textele partajate și poate fi dezactivat din
+  Setări.
 - Varianta distribuită prin GitHub contactează `api.github.com` doar pentru
   a verifica dacă există o versiune nouă a aplicației; nu se transmite nicio
   informație personală. Varianta din Google Play nu face nicio conexiune de
@@ -38,7 +45,11 @@ Pentru întrebări: [casapucristian@gmail.com](mailto:casapucristian@gmail.com)
 NecMat is a material-list calculator for residential electrical
 installations. **It collects no data.** Everything you enter is stored only
 on your device; there are no ads, analytics, tracking SDKs or accounts.
-PDFs and backups leave the device only when you explicitly share them. The
+PDFs and backups leave the device only when you explicitly share them.
+Optional ID-card scanning runs fully on-device (offline ML Kit text
+recognition); the photo is processed in memory, never stored or uploaded, and
+the recognized data is saved only to the local client record after you
+confirm it. The
 GitHub-distributed variant contacts `api.github.com` solely to check for a
 newer app version; the Google Play variant makes no such connection. Delete
 your data anytime from the app or via Android's "Clear app data".
