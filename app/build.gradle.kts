@@ -19,8 +19,9 @@ android {
         applicationId = "com.necmat.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 21
-        versionName = "1.20"
+        versionCode = 22
+        versionName = "1.21"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     // github = distribuție prin GitHub Releases (cu self-update)
@@ -77,4 +78,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // implementarea reală org.json pentru testele locale (în android.jar e mock-uită)
     testImplementation("org.json:json:20240303")
+    // teste instrumentate (ex. PdfPreviewTest generează PDF-uri de verificare pe emulator)
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }

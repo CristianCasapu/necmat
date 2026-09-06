@@ -88,12 +88,84 @@ data class Work(
     val client: String = "",
     val address: String = "",
     val phone: String = "",
-    val isTemplate: Boolean = false
+    val isTemplate: Boolean = false,
+    /** Materiale pe care clientul le are deja — se scad din lista de cumpărături. */
+    val owned: List<OwnedMaterial> = emptyList()
 ) {
     val totalTypes get() = categories.sumOf { it.materials.size }
     val totalPieces get() = categories.sumOf { c -> c.materials.sumOf { it.qty } }
     val totalValue get() = categories.sumOf { c -> c.materials.sumOf { it.qty * it.price } }
     val hasPrices get() = categories.any { c -> c.materials.any { it.price > 0.0 } }
+    val ownedPieces get() = owned.sumOf { it.qty }
+}
+
+/**
+ * Material pe care clientul îl are deja (ex. module, siguranțe automate).
+ * Se scade din lista de cumpărături DUPĂ calculul accesoriilor automate,
+ * ca sloturile ocupate de modulele lui să nu devină obturatoare false.
+ */
+data class OwnedMaterial(
+    val name: String,
+    val qty: Int,
+    val category: String = ""
+)
+
+/** Cheie de potrivire a numelor: fără majuscule, diacritice și spații duble. */
+fun normalizeName(name: String): String =
+    java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+        .lowercase(Locale.ROOT)
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+/**
+ * Scade materialele existente la client din liniile lucrării (inclusiv din
+ * accesoriile calculate automat). Liniile ajunse la 0 și categoriile rămase
+ * goale dispar. În rezultat, `owned` conține doar cantitățile efectiv scăzute.
+ */
+fun Work.subtractOwned(): Work {
+    if (owned.isEmpty()) return this
+    val remaining = linkedMapOf<String, Int>()
+    owned.forEach { o ->
+        if (o.qty > 0) remaining.merge(normalizeName(o.name), o.qty, Int::plus)
+    }
+    val used = linkedMapOf<String, Int>()
+    val newCats = categories.map { c ->
+        c.copy(materials = c.materials.mapNotNull { m ->
+            val key = normalizeName(m.name)
+            val left = remaining[key] ?: 0
+            if (left <= 0 || m.qty <= 0) return@mapNotNull m
+            val take = minOf(m.qty, left)
+            remaining[key] = left - take
+            used.merge(key, take, Int::plus)
+            val q = m.qty - take
+            if (q > 0) m.copy(qty = q) else null
+        })
+    }.filter { it.materials.isNotEmpty() }
+    val effective = owned.mapNotNull { o ->
+        val key = normalizeName(o.name)
+        val u = used[key] ?: 0
+        if (u <= 0) null else {
+            used[key] = 0
+            o.copy(qty = u)
+        }
+    }
+    return copy(categories = newCats, owned = effective)
+}
+
+/**
+ * Lista de cumpărături, în ordinea obligatorie:
+ * necesar complet → accesorii automate → − materiale existente la client → filtrare PDF.
+ * Cu listOwned = false, materialele clientului sunt scăzute dar nu sunt listate.
+ */
+fun Work.shoppingList(
+    autoAccessories: Boolean,
+    includeBoxes: Boolean,
+    listOwned: Boolean = true
+): Work {
+    val withAcc = if (autoAccessories) withAutoAccessories() else this
+    val filtered = withAcc.subtractOwned().filterForPdf(includeBoxes)
+    return if (listOwned) filtered else filtered.copy(owned = emptyList())
 }
 
 /** Migrare v6: „îngropat" devine „încastrat" în toate denumirile. */
@@ -497,6 +569,7 @@ object Repo {
             .put("date", w.date).put("categories", cats)
             .put("client", w.client).put("address", w.address).put("phone", w.phone)
             .put("template", w.isTemplate)
+            .put("owned", ownedToJson(w.owned))
     }
 
     private fun workFromJson(w: JSONObject): Work {
@@ -509,8 +582,50 @@ object Repo {
             client = w.optString("client", ""),
             address = w.optString("address", ""),
             phone = w.optString("phone", ""),
-            isTemplate = w.optBoolean("template", false)
+            isTemplate = w.optBoolean("template", false),
+            owned = ownedFromJson(w.optJSONArray("owned"))
         )
+    }
+
+    // ---- materiale existente la client ----
+
+    private const val OWNED_FILE = "necmat_owned.json"
+
+    fun ownedToJson(list: List<OwnedMaterial>): JSONArray {
+        val arr = JSONArray()
+        list.forEach { o ->
+            arr.put(
+                JSONObject().put("name", o.name).put("qty", o.qty).put("category", o.category)
+            )
+        }
+        return arr
+    }
+
+    /** Lipsa cheii (lucrări vechi, backup-uri v3) înseamnă listă goală. */
+    fun ownedFromJson(arr: JSONArray?): List<OwnedMaterial> {
+        if (arr == null) return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val name = o.optString("name", "")
+            val qty = o.optInt("qty", 0)
+            if (name.isBlank() || qty <= 0) null
+            else OwnedMaterial(name, qty, o.optString("category", ""))
+        }
+    }
+
+    /** Materialele clientului din editorul curent (persistă între porniri). */
+    fun loadOwned(context: Context): List<OwnedMaterial> {
+        val f = File(context.filesDir, OWNED_FILE)
+        if (!f.exists()) return emptyList()
+        return try {
+            ownedFromJson(JSONArray(f.readText()))
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveOwned(context: Context, list: List<OwnedMaterial>) {
+        File(context.filesDir, OWNED_FILE).writeText(ownedToJson(list).toString())
     }
 
     fun load(context: Context): List<Category> {

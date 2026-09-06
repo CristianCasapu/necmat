@@ -294,7 +294,11 @@ fun App(vm: AppViewModel) {
                     Column {
                         Text("NecMat", fontWeight = FontWeight.Bold)
                         if (totalPieces > 0) Text(
-                            "$totalTypes tipuri · $totalPieces buc",
+                            buildString {
+                                append("$totalTypes tipuri · $totalPieces buc")
+                                val own = vm.owned.sumOf { it.qty }
+                                if (own > 0) append(" · $own la client")
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -556,6 +560,10 @@ private fun MaterialsScreen(vm: AppViewModel, onDeleted: (String) -> Unit) {
                 }
                 item(key = "sp${cat.id}") { Spacer(Modifier.height(10.dp)) }
             }
+            // materialele pe care clientul le are deja (se scad din PDF)
+            if (vm.settings.showOwnedSection && !filterActive) {
+                item(key = "owned") { OwnedSection(vm) }
+            }
             item { Spacer(Modifier.height(24.dp)) }
         }
     }
@@ -769,7 +777,7 @@ private fun MaterialRow(
 
 /** Buton de cantitate: apăsare = ±1; ținut apăsat = repetă accelerând. */
 @Composable
-private fun QtyButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun QtyButton(label: String, enabled: Boolean, onClick: () -> Unit) {
     val currentOnClick by androidx.compose.runtime.rememberUpdatedState(onClick)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val bg = if (enabled) MaterialTheme.colorScheme.secondaryContainer
@@ -871,6 +879,25 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                         }
                     }
                 }
+                if (vm.owned.isNotEmpty()) item(key = "ownedsum") {
+                    Surface(
+                        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                    ) {
+                        Text(
+                            "Materiale existente la client: ${vm.owned.sumOf { it.qty }} buc " +
+                                "(${vm.owned.size} tipuri) — se scad din PDF; " +
+                                "oferta de manoperă rămâne pe necesarul complet",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+                val ownedMap = vm.owned.associate { normalizeName(it.name) to it.qty }
                 selected.forEach { (cat, mats) ->
                     item(key = "sc${cat.id}") {
                         Text(
@@ -894,11 +921,19 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.weight(1f)
                             )
-                            Text(
-                                "${m.qty} buc",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold
-                            )
+                            val own = ownedMap[normalizeName(m.name)] ?: 0
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    "${m.qty} buc",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (own > 0) Text(
+                                    "−$own la client → ${(m.qty - own).coerceAtLeast(0)} de cumpărat",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                            }
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                     }
@@ -1462,7 +1497,7 @@ private fun TextDialog(
 }
 
 @Composable
-private fun NumberDialog(
+internal fun NumberDialog(
     title: String,
     initial: Int,
     onDismiss: () -> Unit,
@@ -1622,6 +1657,19 @@ private fun SettingsScreen(
             subtitle = "Rame suport, rame ornament și obturatoare (priza dublă = 2 module)",
             checked = s.autoAccessories,
             onChange = { vm.saveSettings(s.copy(autoAccessories = it)) }
+        )
+        SwitchRow(
+            title = "Listează în PDF materialele clientului",
+            subtitle = "Secțiune finală „Materiale puse la dispoziție de client”; " +
+                "scăderea lor din listă se face oricum",
+            checked = s.ownedInPdf,
+            onChange = { vm.saveSettings(s.copy(ownedInPdf = it)) }
+        )
+        SwitchRow(
+            title = "Secțiunea „Materiale existente la client”",
+            subtitle = "Cardul de la finalul paginii Necesar, unde treci ce are deja clientul",
+            checked = s.showOwnedSection,
+            onChange = { vm.saveSettings(s.copy(showOwnedSection = it)) }
         )
 
         SettingsHeader("Comportament")

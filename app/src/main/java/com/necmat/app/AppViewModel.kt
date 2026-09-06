@@ -22,7 +22,11 @@ data class AppSettings(
     val clearAfterSave: Boolean = true,
     val autoUpdateCheck: Boolean = true,
     val detailExpensesInOffer: Boolean = true,
-    val materialPrices: Boolean = false
+    val materialPrices: Boolean = false,
+    /** Secțiunea „Materiale existente la client” din pagina Necesar. */
+    val showOwnedSection: Boolean = true,
+    /** Listează în PDF / text materialele puse la dispoziție de client. */
+    val ownedInPdf: Boolean = true
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -37,6 +41,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var labor by mutableStateOf(Repo.loadLabor(app))
+        private set
+
+    /** Materialele pe care clientul le are deja, pentru necesarul din editor. */
+    var owned by mutableStateOf(Repo.loadOwned(app))
         private set
 
     var themeMode by mutableStateOf(loadTheme())
@@ -214,6 +222,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun update(transform: (List<Category>) -> List<Category>) {
         categories = transform(categories)
         persist()
+        trimOwned()
+    }
+
+    // ---- materiale existente la client ----
+
+    var ownedExpanded by mutableStateOf(prefs().getBoolean("owned_open", false))
+        private set
+
+    fun toggleOwnedExpanded() {
+        ownedExpanded = !ownedExpanded
+        prefs().edit().putBoolean("owned_open", ownedExpanded).apply()
+    }
+
+    private fun persistOwned() {
+        val snapshot = owned
+        viewModelScope.launch(Dispatchers.IO) {
+            Repo.saveOwned(getApplication(), snapshot)
+        }
+    }
+
+    /**
+     * Liniile care ar intra în lista de cumpărături înainte de scăderea
+     * materialelor clientului (necesar + accesorii automate, filtrate ca pentru PDF).
+     */
+    fun purchasableLines(): List<Category> {
+        val base = Work(
+            0L, "", 0L,
+            categories.map { c -> c.copy(materials = c.materials.filter { it.qty > 0 }) }
+                .filter { it.materials.isNotEmpty() }
+        )
+        return base.shoppingList(settings.autoAccessories, settings.includeBoxesInPdf).categories
+    }
+
+    private fun purchasableQty(): Map<String, Int> {
+        val m = mutableMapOf<String, Int>()
+        purchasableLines().forEach { c ->
+            c.materials.forEach { mat -> m.merge(normalizeName(mat.name), mat.qty, Int::plus) }
+        }
+        return m
+    }
+
+    /** Setează câte bucăți are clientul; 0 scoate linia. Plafonat la necesar. */
+    fun setOwned(name: String, qty: Int, category: String = "") {
+        val key = normalizeName(name)
+        val max = purchasableQty()[key] ?: 0
+        val q = qty.coerceIn(0, max)
+        val rest = owned.filter { normalizeName(it.name) != key }
+        owned = if (q <= 0) rest else rest + OwnedMaterial(name.trim(), q, category)
+        AppLog.i("Client", "Material existent la client: $name = $q")
+        persistOwned()
+    }
+
+    fun removeOwned(name: String) = setOwned(name, 0)
+
+    fun clearOwned() {
+        if (owned.isEmpty()) return
+        owned = emptyList()
+        persistOwned()
+    }
+
+    /** Clientul nu poate „avea” mai mult decât e în lista de cumpărături. */
+    private fun trimOwned() {
+        if (owned.isEmpty()) return
+        val avail = purchasableQty()
+        val trimmed = owned.mapNotNull { o ->
+            val max = avail[normalizeName(o.name)] ?: 0
+            if (max <= 0) null else o.copy(qty = o.qty.coerceAtMost(max))
+        }
+        if (trimmed != owned) {
+            owned = trimmed
+            persistOwned()
+        }
     }
 
     // id-uri strict crescătoare: nu se pot genera duplicate nici când
@@ -343,8 +423,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ordered + cats.filter { c -> ids.none { it == c.id } }
     }
 
-    fun resetQuantities() = update { cats ->
-        cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
+    fun resetQuantities() {
+        clearOwned()
+        update { cats ->
+            cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
+        }
     }
 
     fun restoreDefaults() = update {
@@ -376,7 +459,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .filter { it.materials.isNotEmpty() },
         client = client.trim(),
         address = address.trim(),
-        phone = phone.trim()
+        phone = phone.trim(),
+        owned = owned
     )
 
     /**
@@ -427,8 +511,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         persistWorks()
     }
 
-    /** Încarcă o lucrare salvată înapoi în editor (setează cantitățile). */
-    fun loadWork(work: Work) = update { cats ->
+    /** Încarcă o lucrare salvată înapoi în editor (cantități + materialele clientului). */
+    fun loadWork(work: Work) {
+        loadWorkCategories(work)
+        owned = work.owned
+        persistOwned()
+        trimOwned()
+    }
+
+    private fun loadWorkCategories(work: Work) = update { cats ->
         var result = cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
         work.categories.forEach { wc ->
             val idx = result.indexOfFirst { it.name.equals(wc.name, ignoreCase = true) }
@@ -476,6 +567,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val um = if (c.name.contains("(m)")) "m" else "buc"
             c.materials.forEach { m ->
                 sb.append("  • ").append(m.name).append(" — ").append(m.qty)
+                    .append(" ").append(um).append("\n")
+            }
+        }
+        if (prepared.owned.isNotEmpty()) {
+            sb.append("\nMateriale existente la client (nu sunt în listă):\n")
+            prepared.owned.forEach { o ->
+                val um = if (o.category.contains("(m)")) "m" else "buc"
+                sb.append("  • ").append(o.name).append(" — ").append(o.qty)
                     .append(" ").append(um).append("\n")
             }
         }
@@ -544,6 +643,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .put("clearAfterSave", settings.clearAfterSave)
         .put("detailExpensesInOffer", settings.detailExpensesInOffer)
         .put("materialPrices", settings.materialPrices)
+        .put("showOwnedSection", settings.showOwnedSection)
+        .put("ownedInPdf", settings.ownedInPdf)
 
     fun backupJson(): String =
         Repo.backupJson(categories, works, brands, labor, settingsToJson())
@@ -566,10 +667,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     autoAccessories = s.optBoolean("autoAccessories", settings.autoAccessories),
                     clearAfterSave = s.optBoolean("clearAfterSave", settings.clearAfterSave),
                     detailExpensesInOffer = s.optBoolean("detailExpensesInOffer", settings.detailExpensesInOffer),
-                    materialPrices = s.optBoolean("materialPrices", settings.materialPrices)
+                    materialPrices = s.optBoolean("materialPrices", settings.materialPrices),
+                    showOwnedSection = s.optBoolean("showOwnedSection", settings.showOwnedSection),
+                    ownedInPdf = s.optBoolean("ownedInPdf", settings.ownedInPdf)
                 )
             )
         }
+        trimOwned()
         val cats = categories
         val lab = labor
         viewModelScope.launch(Dispatchers.IO) {
@@ -650,11 +754,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             clearAfterSave = p.getBoolean("clear_after_save", true),
             autoUpdateCheck = p.getBoolean("auto_update", true),
             detailExpensesInOffer = p.getBoolean("offer_detail", true),
-            materialPrices = p.getBoolean("mat_prices", false)
+            materialPrices = p.getBoolean("mat_prices", false),
+            showOwnedSection = p.getBoolean("owned_section", true),
+            ownedInPdf = p.getBoolean("owned_pdf", true)
         )
     }
 
     fun saveSettings(s: AppSettings) {
+        val recheckOwned = s.autoAccessories != settings.autoAccessories ||
+            s.includeBoxesInPdf != settings.includeBoxesInPdf
         settings = s
         prefs().edit()
             .putString("inst_name", s.installerName)
@@ -666,13 +774,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("auto_update", s.autoUpdateCheck)
             .putBoolean("offer_detail", s.detailExpensesInOffer)
             .putBoolean("mat_prices", s.materialPrices)
+            .putBoolean("owned_section", s.showOwnedSection)
+            .putBoolean("owned_pdf", s.ownedInPdf)
             .apply()
+        if (recheckOwned) trimOwned()
     }
 
-    /** Lucrarea pregătită pentru PDF, conform setărilor. */
+    /**
+     * Lucrarea pregătită pentru PDF, conform setărilor:
+     * accesorii automate → − materiale existente la client → filtrare.
+     */
     fun preparePdfWork(work: Work): Work {
-        val withAcc = if (settings.autoAccessories) work.withAutoAccessories() else work
-        val filtered = withAcc.filterForPdf(settings.includeBoxesInPdf)
+        val filtered = work.shoppingList(
+            settings.autoAccessories, settings.includeBoxesInPdf, settings.ownedInPdf
+        )
         // prețurile de achiziție apar doar dacă sunt activate din Setări
         return if (settings.materialPrices) filtered
         else filtered.copy(categories = filtered.categories.map { c ->

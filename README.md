@@ -12,10 +12,18 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
 - Prețuri opționale per material, cu valoare totală calculată
 - **Lucrări salvate** cu nume, dată și date client (client / adresă / telefon),
   cu duplicare și reîncărcare în editor
-- **PDF profesional** cu tabel (Nr. / Denumire / Cant. / UM / P.U. / Valoare),
-  salvat automat în Descărcări
+- **PDF profesional** pentru furnizor și client: antet cu dată și referință,
+  carduri Solicitant (instalator) / Beneficiar (client), tabel
+  (Nr. / Denumire / Cant. / UM / P.U. / Valoare) cu marca pe fiecare categorie,
+  paginare cu antet de continuare; salvat automat în Descărcări
+- **Ofertă de manoperă (PDF)** cu prestator / beneficiar, desfășurător pe grupuri,
+  cheltuieli detaliate sau incluse, total și spații de semnătură
 - **Calcul automat de accesorii** la PDF: rame suport + rame ornament pentru
   fiecare doză modulară și obturatoare (priza dublă ocupă 2 module)
+- **Materiale existente la client**: secțiune în pagina Necesar unde treci ce
+  are deja clientul (module, siguranțe, rame); se scad din lista de cumpărături
+  *după* calculul accesoriilor, deci nu apar obturatoare false; oferta de
+  manoperă rămâne pe necesarul complet, iar PDF-ul le listează separat
 - Backup / restaurare a tuturor datelor (fișier JSON)
 - Temă luminoasă / întunecată / după sistem
 - **Actualizare din aplicație**: verifică GitHub Releases și instalează noua
