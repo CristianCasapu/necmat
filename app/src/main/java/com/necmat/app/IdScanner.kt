@@ -153,6 +153,10 @@ object IdScanner {
         }
     }
 
+    /** Varianta publică pentru analizorul de cadre: (top, left, height) → text. */
+    fun orderLinesPublic(items: List<Pair<Triple<Int, Int, Int>, String>>): List<String> =
+        orderLines(items.map { (g, t) -> Line(g.first, g.second, g.third, t) }.sortedBy { it.top })
+
     /** Grupează liniile pe rânduri (top apropiat) și le ordonează după stânga. */
     private fun orderLines(sorted: List<Line>): List<String> {
         val out = mutableListOf<String>()

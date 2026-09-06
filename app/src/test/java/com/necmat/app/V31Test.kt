@@ -31,7 +31,7 @@ class V31Test {
     }
 
     @Test
-    fun `prea departe - apropie; iese din chenar - departeaza`() {
+    fun `prea departe - apropie, iese din chenar - departeaza`() {
         val far = assessFrame(idLines, FrameBox(400f, 500f, 700f, 640f), guide, IdCardParser.parse(idLines))
         assertEquals(1, far.level)
         assertTrue(far.status.contains("Apropie"))
@@ -42,7 +42,7 @@ class V31Test {
     }
 
     @Test
-    fun `incadrat dar inca necitit - tine nemiscat; CNP invalid - reflexii`() {
+    fun `incadrat dar inca necitit - tine nemiscat, CNP invalid - reflexii`() {
         val ok = assessFrame(idLines, FrameBox(150f, 350f, 930f, 800f), guide, IdCardParser.parse(idLines))
         assertEquals(1, ok.level)
         assertTrue(ok.status.contains("nemișcat"))

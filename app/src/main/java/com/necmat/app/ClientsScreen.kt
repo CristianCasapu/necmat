@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -203,6 +204,17 @@ fun ClientFields(
     var scanThumb by remember { mutableStateOf<Bitmap?>(null) }
     var scanLines by remember { mutableStateOf<List<String>>(emptyList()) }
     var captureUri by remember { mutableStateOf<Uri?>(null) }
+    var liveScan by remember { mutableStateOf(false) }
+
+    if (liveScan) IdCameraScanDialog(
+        onDismiss = { liveScan = false },
+        onScanned = { result, lines, frame ->
+            liveScan = false
+            scanResult = result
+            scanLines = lines
+            scanThumb = frame
+        }
+    )
 
     fun runScan(uri: Uri) {
         if (scanBusy) return
@@ -256,6 +268,11 @@ fun ClientFields(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = { liveScan = true },
+            enabled = !scanBusy,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("📷 Scanează buletinul cu camera (în timp real)") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(
                 onClick = {
@@ -270,7 +287,7 @@ fun ClientFields(
                 enabled = !scanBusy,
                 contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier.weight(1f)
-            ) { Text("📷 Scanează buletinul", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            ) { Text("Poză cu aplicația foto", maxLines = 1, overflow = TextOverflow.Ellipsis) }
             OutlinedButton(
                 onClick = {
                     imageLauncher.launch(

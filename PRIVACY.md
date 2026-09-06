@@ -18,9 +18,11 @@ personale sau de utilizare.
 - PDF-urile și fișierele de backup sunt create local și părăsesc dispozitivul
   doar dacă alegeți explicit să le partajați.
 - **Scanarea actului de identitate** (opțională) se face integral pe
-  dispozitiv, cu recunoaștere de text offline (ML Kit). Fotografia este
-  procesată în memorie și ștearsă imediat; nu este salvată și nu este
-  transmisă nicăieri. Datele recunoscute (nume, adresă, CNP) ajung doar în
+  dispozitiv, cu recunoaștere de text offline (ML Kit). Fotografia sau
+  cadrele camerei sunt procesate în memorie și șterse imediat; nu sunt
+  salvate și nu sunt transmise nicăieri. Permisiunea de cameră este cerută
+  doar când porniți scanarea în timp real și poate fi refuzată (rămân
+  variantele „poză cu aplicația foto” și „din imagine”). Datele recunoscute (nume, adresă, CNP) ajung doar în
   fișa clientului de pe telefon, după ce le confirmați; CNP-ul nu apare
   niciodată în PDF-uri sau în textele partajate și poate fi dezactivat din
   Setări.

@@ -8,6 +8,9 @@
     <!-- remindere locale pentru programări (v1.26) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- scanarea actului cu camera din aplicație (v1.31); fără cameră aplicația merge normal -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:allowBackup="true"
