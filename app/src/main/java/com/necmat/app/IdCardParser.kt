@@ -215,6 +215,25 @@ object IdCardParser {
         return parts.joinToString(", ") to ok
     }
 
+    /**
+     * Combină două citiri (cadre / treceri diferite): pe fiecare câmp câștigă
+     * valoarea confirmată; dacă niciuna nu e confirmată, cea mai completă.
+     */
+    fun merge(a: IdScanResult, b: IdScanResult): IdScanResult {
+        fun pick(av: String, aSure: Boolean, bv: String, bSure: Boolean): Pair<String, Boolean> = when {
+            aSure && av.isNotBlank() -> av to true
+            bSure && bv.isNotBlank() -> bv to true
+            av.isBlank() -> bv to false
+            bv.isBlank() -> av to false
+            else -> (if (bv.length > av.length) bv else av) to false
+        }
+        val (s, ss) = pick(a.surname, a.surnameSure, b.surname, b.surnameSure)
+        val (g, gs) = pick(a.givenNames, a.givenSure, b.givenNames, b.givenSure)
+        val (c, cs) = pick(a.cnp, a.cnpSure, b.cnp, b.cnpSure)
+        val (ad, ads) = pick(a.address, a.addressSure, b.address, b.addressSure)
+        return IdScanResult(s, g, c, ad, ss, gs, cs, ads)
+    }
+
     fun parse(rawLines: List<String>): IdScanResult {
         val lines = rawLines.map { it.trim() }.filter { it.isNotEmpty() }
         if (lines.isEmpty()) return IdScanResult()

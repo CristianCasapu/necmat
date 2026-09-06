@@ -54,6 +54,7 @@ object IdScanner {
         val bitmap = decodeScaled(context, uri, MAX_PX) ?: return@withContext Scan(emptyList(), null)
         var lines: List<String> = emptyList()
         var result = IdScanResult()
+        var bestBmp = bitmap
         val attempts = listOf(0f, 90f, 270f, 180f)
         for (deg in attempts) {
             val bmp = if (deg == 0f) bitmap else rotate(bitmap, deg)
@@ -69,8 +70,26 @@ object IdScanner {
             if (better) {
                 lines = l
                 result = r
+                bestBmp = bmp
             }
             if (result.cnpSure && result.surname.isNotBlank()) break
+        }
+        fun complete() = result.cnpSure && result.surname.isNotBlank() && result.givenNames.isNotBlank()
+        // trecere cu contrast mărit, alb-negru (act lucios, lumină slabă)
+        if (!complete()) {
+            val l = try { recognize(enhance(bestBmp)) } catch (e: Exception) { emptyList() }
+            val r = IdCardParser.parse(l)
+            AppLog.d("Scan", "OCR contrast: ${l.size} linii, cnp=${r.cnpSure}")
+            if (score(r, l.size) > score(result, lines.size)) lines = l
+            result = IdCardParser.merge(result, r)
+        }
+        // banda MRZ (jos, ~36 % din înălțime) mărită de 2× — pe cartea veche dă sigur numele și CNP-ul
+        if (!complete()) {
+            val l = try { recognize(cropBottom(bestBmp, 0.36f, 2f)) } catch (e: Exception) { emptyList() }
+            val r = IdCardParser.parse(l)
+            AppLog.d("Scan", "OCR MRZ: ${l.size} linii, cnp=${r.cnpSure}, nume=${r.surname.isNotBlank()}")
+            result = IdCardParser.merge(result, r)
+            if (l.isNotEmpty()) lines = (lines + l).distinct()
         }
         val thumb = try {
             val scale = THUMB_PX.toFloat() / maxOf(bitmap.width, bitmap.height)
@@ -94,6 +113,34 @@ object IdScanner {
     private fun rotate(src: Bitmap, degrees: Float): Bitmap {
         val m = Matrix().apply { postRotate(degrees) }
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
+    }
+
+    /** Alb-negru cu contrast mărit — textul negru iese mai bine de pe fondul ghioșat al actului. */
+    fun enhance(src: Bitmap, contrast: Float = 1.6f): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val cm = android.graphics.ColorMatrix().apply { setSaturation(0f) }
+        val t = (1f - contrast) * 128f
+        cm.postConcat(
+            android.graphics.ColorMatrix(
+                floatArrayOf(
+                    contrast, 0f, 0f, 0f, t,
+                    0f, contrast, 0f, 0f, t,
+                    0f, 0f, contrast, 0f, t,
+                    0f, 0f, 0f, 1f, 0f
+                )
+            )
+        )
+        val paint = android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(cm) }
+        android.graphics.Canvas(out).drawBitmap(src, 0f, 0f, paint)
+        return out
+    }
+
+    /** Banda de jos a imaginii (fracțiune din înălțime), mărită — pentru zona MRZ. */
+    fun cropBottom(src: Bitmap, fraction: Float, scale: Float): Bitmap {
+        val h = (src.height * fraction).toInt().coerceIn(1, src.height)
+        val crop = Bitmap.createBitmap(src, 0, src.height - h, src.width, h)
+        return if (scale == 1f) crop
+        else Bitmap.createScaledBitmap(crop, (crop.width * scale).toInt(), (crop.height * scale).toInt(), true)
     }
 
     /** Decodează imaginea la cel mult [maxPx] pe latura lungă și o rotește după EXIF. */

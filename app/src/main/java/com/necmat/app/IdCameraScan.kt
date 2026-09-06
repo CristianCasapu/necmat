@@ -108,6 +108,12 @@ fun assessFrame(lines: List<String>, textUnion: FrameBox?, guide: FrameBox, resu
     }
     if (widthRatio < 0.55f) return FrameAssessment("Apropie camera de act", 1, result, true)
     if (outside) return FrameAssessment("Depărtează puțin, actul iese din chenar", 1, result, true)
+    if (result.cnpSure && result.surname.isBlank()) {
+        return FrameAssessment("Am CNP-ul ✓ — caut numele, ține actul drept", 1, result, true)
+    }
+    if (result.surname.isNotBlank() && result.cnp.isBlank()) {
+        return FrameAssessment("Am numele ✓ — caut CNP-ul, evită reflexiile", 1, result, true)
+    }
     if (result.cnp.isNotBlank() && !result.cnpSure) {
         return FrameAssessment("CNP citit greșit — evită reflexiile, mai multă lumină", 1, result, true)
     }
@@ -154,6 +160,7 @@ fun IdCameraScanDialog(
     var captured by remember { mutableStateOf(false) }
     var stableCnp by remember { mutableStateOf("") }
     var stableCount by remember { mutableStateOf(0) }
+    var accumulated by remember { mutableStateOf(IdScanResult()) }
 
     val executor = remember { Executors.newSingleThreadExecutor() }
     val recognizer = remember { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
@@ -220,7 +227,10 @@ fun IdCameraScanDialog(
                             recognizer.process(input)
                                 .addOnSuccessListener { text ->
                                     val (lines, rects) = IdScanner.linesAndBoxes(text)
-                                    val result = IdCardParser.parse(lines)
+                                    val frameResult = IdCardParser.parse(lines)
+                                    // câmpurile se cumulează între cadre: CNP dintr-unul, numele din altul
+                                    accumulated = IdCardParser.merge(accumulated, frameResult)
+                                    val result = accumulated
                                     val vs = viewSize
                                     if (vs.width > 0 && vs.height > 0) {
                                         // FILL_CENTER: scalare uniformă + centrare
@@ -245,16 +255,16 @@ fun IdCameraScanDialog(
                                         level = a.level
                                     }
                                     lastResult = result
-                                    lastLines = lines
-                                    if (result.cnpSure && result.surname.isNotBlank()) {
-                                        if (result.cnp == stableCnp) stableCount++ else { stableCnp = result.cnp; stableCount = 1 }
+                                    if (lines.size >= lastLines.size) lastLines = lines
+                                    if (frameResult.cnpSure) {
+                                        if (frameResult.cnp == stableCnp) stableCount++ else { stableCnp = frameResult.cnp; stableCount = 1 }
+                                    }
+                                    if (result.cnpSure && result.surname.isNotBlank() && result.givenNames.isNotBlank()) {
                                         if (stableCount >= 2) {
                                             val bmp = try { rotateBitmap(proxy.toBitmap(), rot) } catch (_: Exception) { null }
                                             lastFrame = bmp
                                             finish(result, lines, bmp)
                                         }
-                                    } else {
-                                        stableCount = 0
                                     }
                                 }
                                 .addOnFailureListener { e -> AppLog.w("Scan", "Cadru nerecunoscut", e) }

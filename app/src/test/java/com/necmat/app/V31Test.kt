@@ -45,7 +45,7 @@ class V31Test {
     fun `incadrat dar inca necitit - tine nemiscat, CNP invalid - reflexii`() {
         val ok = assessFrame(idLines, FrameBox(150f, 350f, 930f, 800f), guide, IdCardParser.parse(idLines))
         assertEquals(1, ok.level)
-        assertTrue(ok.status.contains("nemișcat"))
+        assertTrue(ok.status.contains("caut CNP"))
         val badCnp = IdScanResult(surname = "Popescu", cnp = "1234567890123", cnpSure = false)
         val b = assessFrame(idLines + "CNP 1234567890123", FrameBox(150f, 350f, 930f, 800f), guide, badCnp)
         assertTrue(b.status.contains("greșit"))
