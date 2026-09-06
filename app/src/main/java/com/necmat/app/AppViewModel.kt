@@ -829,12 +829,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Dozele + corpurile de iluminat din catalog (pentru prețurile de manoperă). */
-    fun laborItems(): List<String> =
-        categories.flatMap { c ->
-            c.materials.map { it.name }.filter { n ->
-                isMontajCategory(c.name) || (isDozaItem(n) && !isTablouCarcasa(n))
+    /**
+     * Elementele care pot avea preț de manoperă, grupate pe categorie: doze,
+     * corpuri de iluminat, aparataj încastrat / aplicat, componente de tablou
+     * (fără carcase — au preț pe etaj), tuburi / jgheaburi (fără cabluri — au
+     * preț pe metru după modul de montaj). Modulele nu au manoperă proprie.
+     */
+    fun laborItems(): List<Pair<String, List<String>>> {
+        val seen = mutableSetOf<String>()
+        return categories.mapNotNull { c ->
+            if (c.name.trim().equals("module", ignoreCase = true)) return@mapNotNull null
+            val cn = c.name.lowercase()
+            val cableCat = isCableCategory(c.name)
+            val eligible = isMontajCategory(c.name) || cn.contains("doz") || cn.contains("aparataj") ||
+                cn.contains("tablou") || cableCat
+            if (!eligible) return@mapNotNull null
+            val names = c.materials.map { it.name }.filter { n ->
+                !isTablouCarcasa(n) && !(cableCat && isCableItem(n)) && seen.add(n.trim().lowercase())
             }
-        }.distinctBy { it.trim().lowercase() }
+            if (names.isEmpty()) null else c.name to names
+        }
+    }
 
     // ---- backup / restaurare ----
 

@@ -1842,7 +1842,7 @@ private fun SettingsScreen(
             onClick = { showDozaLabor = true },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Manoperă doze + corpuri iluminat (${vm.labor.dozaPrices.count { it.value > 0 }} setate)")
+            Text("Manoperă per element: doze, aparataj, tablou, tuburi, cabluri (${vm.labor.dozaPrices.count { it.value > 0 }} prețuri setate)")
         }
         Spacer(Modifier.height(4.dp))
         SwitchRow(
@@ -2418,39 +2418,72 @@ private fun DozaLaborDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     val cfg = vm.labor
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Manoperă per doză") },
+        title = { Text("Manoperă per element") },
         text = {
             Column(
                 Modifier
-                    .heightIn(max = 440.dp)
+                    .heightIn(max = 480.dp)
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    "Prețul de montaj pentru fiecare tip de doză (lei/buc).",
+                    "Prețul de montaj pentru fiecare element (lei/buc; la tuburi și jgheaburi lei/m). " +
+                        "Cablurile și conductorii se taxează pe metru după modul de montaj al categoriei " +
+                        "(setat din meniul categoriei „Cabluri și tuburi”).",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 6.dp)
                 )
-                vm.laborItems().forEach { name ->
-                    val key = name.trim().lowercase()
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        PriceField(
-                            "lei", cfg.dozaPrices[key] ?: 0.0,
-                            Modifier.widthIn(min = 96.dp, max = 96.dp)
-                        ) { p ->
-                            vm.saveLabor(
-                                vm.labor.copy(dozaPrices = vm.labor.dozaPrices + (key to p))
+                Text(
+                    "Cablu / conductor (lei pe metru)",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
+                )
+                listOf("incastrat" to "Încastrat (în tub PVC / sub tencuială)", "aparent" to "Aparent (copex metalic, pat, jgheab)")
+                    .forEach { (mode, label) ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            PriceField(
+                                "lei/m", cfg.cablePerMeter[mode] ?: 0.0,
+                                Modifier.widthIn(min = 96.dp, max = 96.dp)
+                            ) { p ->
+                                vm.saveLabor(vm.labor.copy(cablePerMeter = vm.labor.cablePerMeter + (mode to p)))
+                            }
+                        }
+                    }
+                vm.laborItems().forEach { (catName, names) ->
+                    Text(
+                        catName,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                    )
+                    names.forEach { name ->
+                        val key = name.trim().lowercase()
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
+                            PriceField(
+                                "lei", cfg.dozaPrices[key] ?: 0.0,
+                                Modifier.widthIn(min = 96.dp, max = 96.dp)
+                            ) { p ->
+                                vm.saveLabor(
+                                    vm.labor.copy(dozaPrices = vm.labor.dozaPrices + (key to p))
+                                )
+                            }
                         }
                     }
                 }
@@ -2640,9 +2673,20 @@ private fun CategoryBrandDialog(
                     label = { Text("Model / serie") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
-                if (group == BrandGroups.TABLOU) {
+                val phaseOptions = when {
+                    group == BrandGroups.TABLOU -> listOf("" to "—", "mono" to "Monofazic", "tri" to "Trifazic")
+                    isCableCategory(cat.name) -> listOf("incastrat" to "Încastrat", "aparent" to "Aparent")
+                    else -> emptyList()
+                }
+                if (phaseOptions.isNotEmpty()) {
+                    if (isCableCategory(cat.name)) Text(
+                        "Mod de montaj (manopera pe metru de cablu: încastrat / aparent)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        listOf("" to "—", "mono" to "Monofazic", "tri" to "Trifazic")
+                        phaseOptions
                             .forEach { (value, label) ->
                                 Row(
                                     Modifier

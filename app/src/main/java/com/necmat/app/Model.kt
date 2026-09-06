@@ -34,6 +34,8 @@ data class Category(
     val phaseLabel get() = when (phase) {
         "mono" -> "Monofazic"
         "tri" -> "Trifazic"
+        "incastrat" -> "Încastrat"
+        "aparent" -> "Aparent"
         else -> ""
     }
 }
@@ -241,7 +243,9 @@ data class LaborConfig(
     val travel: Double = 0.0,        // deplasare
     val food: Double = 0.0,          // mâncare
     val consumables: Double = 0.0,   // consumabile
-    val helperPerDay: Double = 250.0 // ajutor electrician (lei/zi)
+    val helperPerDay: Double = 250.0, // ajutor electrician (lei/zi)
+    /** Manoperă per metru de cablu/conductor după modul de montaj: "incastrat" / "aparent". */
+    val cablePerMeter: Map<String, Double> = emptyMap()
 )
 
 data class LaborLine(
@@ -291,8 +295,15 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
     val groupOrder = listOf(
         "Montaj aparataj modular",
         "Montaj aparataj",
+        "Montaj aparataj încastrat",
+        "Montaj aparataj aplicat",
         "Montaj doze legături",
-        "Montaj corpuri de iluminat"
+        "Montaj corpuri de iluminat",
+        "Montaj cablu încastrat",
+        "Montaj cablu aparent",
+        "Montaj tuburi, canale și jgheaburi",
+        "Echipare tablou — componente",
+        "Montaj diverse"
     )
 
     class Acc {
@@ -315,8 +326,23 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
         val montaj = isMontajCategory(c.name)
         val legaturi = c.name.contains("legături", ignoreCase = true) ||
             c.name.contains("legaturi", ignoreCase = true)
+        val cn = c.name.lowercase()
+        val cableCat = isCableCategory(c.name)
+        val tablouCat = cn.contains("tablou")
+        val aplicatCat = cn.contains("aplicat")
+        val incastratCat = cn.contains("aparataj") && (cn.contains("încastrat") || cn.contains("incastrat"))
+        val moduleCat = c.name.trim().equals("module", ignoreCase = true)
         c.materials.forEach { m ->
             if (m.qty <= 0) return@forEach
+            if (cableCat && isCableItem(m.name)) {
+                // cablu / conductor: preț pe metru după modul de montaj al categoriei
+                val mode = cableModeOf(c)
+                val price = cfg.cablePerMeter[mode] ?: 0.0
+                if (price > 0) addTo(
+                    if (mode == "aparent") "Montaj cablu aparent" else "Montaj cablu încastrat", m.qty, price
+                )
+                return@forEach
+            }
             if (isTablouCarcasa(m.name)) {
                 tablouRows(m.name)?.let { (rows, size) ->
                     val price = cfg.rowPrices[size]
@@ -334,6 +360,20 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
                         isModularBox(m.name) -> "Montaj aparataj modular"
                         legaturi -> "Montaj doze legături"
                         else -> "Montaj aparataj"
+                    }
+                    addTo(group, m.qty, price)
+                }
+            } else if (!moduleCat) {
+                // orice alt element cu preț setat în Setări → Manoperă (tuburi, jgheaburi,
+                // componente de tablou, prize/întrerupătoare încastrate sau aplicate)
+                val price = cfg.dozaPrices[m.name.trim().lowercase()] ?: 0.0
+                if (price > 0) {
+                    val group = when {
+                        cableCat -> "Montaj tuburi, canale și jgheaburi"
+                        tablouCat -> "Echipare tablou — componente"
+                        aplicatCat -> "Montaj aparataj aplicat"
+                        incastratCat -> "Montaj aparataj încastrat"
+                        else -> "Montaj diverse"
                     }
                     addTo(group, m.qty, price)
                 }
@@ -357,6 +397,22 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
         days = 0, helperPerDay = cfg.helperPerDay
     )
 }
+
+/** Categoria de cabluri și tuburi (după nume). */
+fun isCableCategory(name: String): Boolean {
+    val n = name.lowercase()
+    return n.contains("cablu") || n.contains("tub")
+}
+
+/** Cablu sau conductor (se taxează pe metru după modul de montaj), nu tub / canal / jgheab. */
+fun isCableItem(name: String): Boolean {
+    val n = name.trim().lowercase()
+    return n.startsWith("cablu") || n.startsWith("conductor") ||
+        Regex("\\b(cyy|nyy|myym|fy)\\b").containsMatchIn(n)
+}
+
+/** Modul de montaj al categoriei de cabluri: "aparent" sau "incastrat" (implicit). */
+fun cableModeOf(c: Category): String = if (c.phase == "aparent") "aparent" else "incastrat"
 
 /** Componentă trifazică după nume (3P, 4P, "trifazic"). */
 fun isTriphasicItem(name: String): Boolean {
@@ -805,7 +861,9 @@ object Repo {
             "lustră mare" to 150.0
         ),
         rowPrices = mapOf(13 to 300.0, 18 to 300.0, 24 to 300.0),
-        helperPerDay = 250.0
+        helperPerDay = 250.0,
+        // cablu / conductor: 5 lei/m încastrat, 3 lei/m aparent
+        cablePerMeter = mapOf("incastrat" to 5.0, "aparent" to 3.0)
     )
 
     /**
@@ -817,7 +875,8 @@ object Repo {
         val d = defaultLaborConfig()
         return cfg.copy(
             dozaPrices = d.dozaPrices + cfg.dozaPrices,
-            rowPrices = d.rowPrices + cfg.rowPrices
+            rowPrices = d.rowPrices + cfg.rowPrices,
+            cablePerMeter = d.cablePerMeter + cfg.cablePerMeter
         )
     }
 
@@ -826,7 +885,9 @@ object Repo {
         cfg.dozaPrices.forEach { (k, v) -> if (v > 0) doza.put(k, v) }
         val rows = JSONObject()
         cfg.rowPrices.forEach { (k, v) -> if (v > 0) rows.put(k.toString(), v) }
-        return JSONObject().put("doza", doza).put("rows", rows)
+        val cable = JSONObject()
+        cfg.cablePerMeter.forEach { (k, v) -> cable.put(k, v) }
+        return JSONObject().put("doza", doza).put("rows", rows).put("cable", cable)
             .put("travel", cfg.travel).put("food", cfg.food)
             .put("consumables", cfg.consumables)
             .put("helperPerDay", cfg.helperPerDay)
@@ -835,7 +896,9 @@ object Repo {
     fun laborFromJson(o: JSONObject): LaborConfig {
         val doza = o.optJSONObject("doza") ?: JSONObject()
         val rows = o.optJSONObject("rows") ?: JSONObject()
+        val cable = o.optJSONObject("cable") ?: JSONObject()
         return LaborConfig(
+            cablePerMeter = cable.keys().asSequence().associateWith { cable.getDouble(it) },
             dozaPrices = doza.keys().asSequence().associateWith { doza.getDouble(it) },
             rowPrices = rows.keys().asSequence()
                 .mapNotNull { k -> k.toIntOrNull()?.let { it to rows.getDouble(k) } }
@@ -976,6 +1039,24 @@ object Repo {
         "Busbar trifazic 18 module (pieptene 3P)"
     )
 
+    /** v11: cabluri și conductori de cupru (mono/trifazic), tuburi, paturi, jgheaburi, canale. */
+    val cableExtrasV11 = listOf(
+        "Cablu CYY-F 3x4", "Cablu CYY-F 3x6", "Cablu CYY-F 3x10", "Cablu CYY-F 3x16",
+        "Cablu CYY-F 5x1.5", "Cablu CYY-F 5x2.5", "Cablu CYY-F 5x4", "Cablu CYY-F 5x6",
+        "Cablu CYY-F 5x10", "Cablu CYY-F 5x16",
+        "Cablu NYY-J 3x2.5", "Cablu NYY-J 3x6", "Cablu NYY-J 5x4", "Cablu NYY-J 5x6",
+        "Cablu NYY-J 5x10", "Cablu NYY-J 5x16", "Cablu NYY-J 5x25",
+        "Cablu MYYM 2x1.5", "Cablu MYYM 3x1.5", "Cablu MYYM 3x2.5",
+        "Conductor FY 1.5 mm²", "Conductor FY 2.5 mm²", "Conductor FY 4 mm²", "Conductor FY 6 mm²",
+        "Conductor FY 10 mm²", "Conductor FY 16 mm²", "Conductor FY 25 mm²",
+        "Tub copex PVC Ø25 (încastrat)", "Tub copex PVC Ø32 (încastrat)",
+        "Copex metalic Ø16 (aparent)", "Copex metalic Ø20 (aparent)", "Copex metalic Ø25 (aparent)",
+        "Pat de cablu 100 mm", "Pat de cablu 200 mm",
+        "Jgheab metalic perforat 100x60 cu capac", "Jgheab metalic perforat 200x60 cu capac",
+        "Jgheab metalic neperforat 100x60 cu capac", "Jgheab metalic neperforat 200x60 cu capac",
+        "Canal cablu PVC 25x16", "Canal cablu PVC 40x25", "Canal cablu PVC 60x40"
+    )
+
     private val dozeLegaturiExtras = listOf(
         "Clemă distribuție simplă (4 intrări)", "Clemă distribuție dublă (8 intrări)"
     )
@@ -1032,7 +1113,8 @@ object Repo {
             ),
             cat(
                 "Cabluri și tuburi (m)",
-                "Cablu CYY-F 3x1.5", "Cablu CYY-F 3x2.5", "Tub copex Ø16", "Tub copex Ø20"
+                *(listOf("Cablu CYY-F 3x1.5", "Cablu CYY-F 3x2.5", "Tub copex Ø16", "Tub copex Ø20") +
+                    cableExtrasV11).toTypedArray()
             ),
             cat("Corpuri de iluminat (montaj)", *lightingItems.toTypedArray())
         )
@@ -1053,7 +1135,22 @@ object Repo {
         out = migrateV8(out, newId)
         out = migrateV9(out, newId)
         out = migrateV10(out)
+        out = migrateV11(out, newId)
         return fixDuplicateIds(out, newId)
+    }
+
+    /** Migrare v11: cabluri, conductori, tuburi și jgheaburi în categoria de cabluri. */
+    fun migrateV11(cats: List<Category>, newId: () -> Long): List<Category> = cats.map { c ->
+        if (!isCableCategory(c.name)) c
+        else {
+            var out = c
+            cableExtrasV11.forEach { name ->
+                if (out.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                    out = out.copy(materials = out.materials + Material(newId(), name))
+                }
+            }
+            out
+        }
     }
 
     /** Reasignează id-urile duplicate (moștenite din generatorul vechi de id-uri). */
