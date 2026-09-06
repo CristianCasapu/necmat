@@ -65,6 +65,94 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var owned by mutableStateOf(Repo.loadOwned(app))
         private set
 
+    // ---- v1.35: reguli speciale ale necesarului din editor (setate de asistent) ----
+
+    /** "electric" / "pv" / "" — tipul lucrării din editor. */
+    var workKind by mutableStateOf(prefs().getString("ed_kind", "") ?: "")
+        private set
+
+    /** null = după setare; true = dozele / carcasele intră în PDF pentru lucrarea curentă. */
+    var workPdfBoxes by mutableStateOf<Boolean?>(
+        when (prefs().getString("ed_pdf_boxes", "")) { "true" -> true; "false" -> false; else -> null }
+    )
+        private set
+
+    /** Linii de manoperă fixe pentru lucrarea curentă (ex. fotovoltaic per kW). */
+    var workExtraLabor by mutableStateOf(
+        try {
+            Repo.laborLinesFromJson(org.json.JSONArray(prefs().getString("ed_extra_labor", "[]") ?: "[]"))
+        } catch (e: Exception) { emptyList() }
+    )
+        private set
+
+    private fun persistWorkExtras() {
+        prefs().edit()
+            .putString("ed_kind", workKind)
+            .putString("ed_pdf_boxes", workPdfBoxes?.toString() ?: "")
+            .putString("ed_extra_labor", Repo.laborLinesToJson(workExtraLabor).toString())
+            .apply()
+    }
+
+    fun setWorkExtras(kind: String, pdfBoxes: Boolean?, extraLabor: List<LaborLine>) {
+        workKind = kind
+        workPdfBoxes = pdfBoxes
+        workExtraLabor = extraLabor
+        persistWorkExtras()
+    }
+
+    fun clearWorkExtras() = setWorkExtras("", null, emptyList())
+
+    /** Dozele / carcasele intră în PDF pentru necesarul curent? */
+    val includeBoxesNow: Boolean get() = workPdfBoxes ?: settings.includeBoxesInPdf
+
+    /**
+     * Aplică planul asistentului peste editor: cantități (înlocuind sau adunând),
+     * mărci pe categorii, modul de montaj al cablurilor și regulile speciale.
+     * Materialele care lipsesc din catalog sunt create în categoria lor.
+     */
+    fun applyWizardPlan(plan: WizardPlan, kind: String, replace: Boolean) {
+        rememberUndo()
+        if (replace) {
+            clearOwned()
+        }
+        update { cats ->
+            var result = if (replace)
+                cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
+            else cats
+            plan.items.forEach { item ->
+                val idx = result.indexOfFirst { it.name.equals(item.category, ignoreCase = true) }
+                if (idx < 0) {
+                    result = result + Category(
+                        newId(), item.category, listOf(Material(newId(), item.material, item.qty))
+                    )
+                } else {
+                    val cat = result[idx]
+                    val mIdx = cat.materials.indexOfFirst { normalizeName(it.name) == normalizeName(item.material) }
+                    val updated = if (mIdx >= 0) cat.copy(materials = cat.materials.mapIndexed { i, m ->
+                        if (i == mIdx) m.copy(qty = m.qty + item.qty) else m
+                    }) else cat.copy(materials = cat.materials + Material(newId(), item.material, item.qty))
+                    result = result.mapIndexed { i, c -> if (i == idx) updated else c }
+                }
+            }
+            // mărci și modul de montaj al cablurilor
+            result = result.map { c ->
+                var cc = c
+                plan.brandFor[c.name]?.let { (b, m) -> cc = cc.copy(brand = b, model = m) }
+                if (plan.cableMode.isNotBlank() && isCableCategory(c.name)) cc = cc.copy(phase = plan.cableMode)
+                if (kind == "electric" && c.name.equals("Tablou electric", ignoreCase = true) && plan.tablouPhase.isNotBlank())
+                    cc = cc.copy(phase = plan.tablouPhase)
+                cc
+            }
+            result
+        }
+        setWorkExtras(
+            kind,
+            plan.pdfIncludeBoxes ?: (if (replace) null else workPdfBoxes),
+            if (replace) plan.extraLabor else workExtraLabor + plan.extraLabor
+        )
+        AppLog.i("Asistent", "Plan aplicat ($kind): ${plan.items.sumOf { it.qty }} buc în ${plan.items.size} linii")
+    }
+
     /** Clienții — entitate separată; e-mailul și CNP-ul rămân doar aici. */
     var clients by mutableStateOf(ClientsRepo.load(app))
         private set
@@ -451,7 +539,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             categories.map { c -> c.copy(materials = c.materials.filter { it.qty > 0 }) }
                 .filter { it.materials.isNotEmpty() }
         )
-        return base.shoppingList(settings.autoAccessories, settings.includeBoxesInPdf).categories
+        return base.shoppingList(settings.autoAccessories, includeBoxesNow).categories
     }
 
     private fun purchasableQty(): Map<String, Int> {
@@ -624,6 +712,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun resetQuantities() {
         clearOwned()
+        clearWorkExtras()
         update { cats ->
             cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
         }
@@ -661,7 +750,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         address = address.trim(),
         phone = phone.trim(),
         owned = owned,
-        clientId = clientId
+        clientId = clientId,
+        pdfIncludeBoxes = workPdfBoxes,
+        extraLabor = workExtraLabor,
+        kind = workKind
     )
 
     /**
@@ -721,6 +813,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         owned = work.owned
         persistOwned()
         trimOwned()
+        setWorkExtras(work.kind, work.pdfIncludeBoxes, work.extraLabor)
     }
 
     private fun loadWorkCategories(work: Work) = update { cats ->
@@ -1064,7 +1157,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun preparePdfWork(work: Work): Work {
         val filtered = work.shoppingList(
-            settings.autoAccessories, settings.includeBoxesInPdf, settings.ownedInPdf
+            settings.autoAccessories, effectiveIncludeBoxes(work, settings.includeBoxesInPdf), settings.ownedInPdf
         )
         // prețurile de achiziție apar doar dacă sunt activate din Setări
         return if (settings.materialPrices) filtered

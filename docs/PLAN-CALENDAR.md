@@ -354,3 +354,9 @@ automate pentru **toate** programările fără să le adaugi manual).
 Într-o sesiune nouă e suficient să spui „continuă etapa X din docs/PLAN-CALENDAR.md”.
 La finalul fiecărei etape: bifăm punctele, actualizăm README (secțiunea Funcții)
 și, dacă e cazul, `PRIVACY.md`.
+
+## Asistent necesar nou (v1.35) — ✅ livrat 2026-09-07
+
+Planul detaliat: [PLAN-WIZARD.md](PLAN-WIZARD.md) — instalație electrică (pe încăperi,
+stare instalație, tablou pe circuite) și sistem fotovoltaic (panouri, tablouri DC/AC,
+manoperă 130–150 €/kW).

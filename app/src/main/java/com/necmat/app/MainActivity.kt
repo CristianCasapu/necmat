@@ -58,6 +58,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
@@ -267,6 +268,7 @@ fun App(vm: AppViewModel) {
     var menuOpen by remember { mutableStateOf(false) }
     var showAddCategory by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+    var showWizard by remember { mutableStateOf(false) }
     var confirmDefaults by remember { mutableStateOf(false) }
     var confirmImport by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -355,6 +357,10 @@ fun App(vm: AppViewModel) {
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                            text = { Text("Necesar nou (asistent)") },
+                            onClick = { menuOpen = false; showWizard = true })
+                        DropdownMenuItem(
                             text = { Text("Adaugă categorie") },
                             onClick = { menuOpen = false; showAddCategory = true })
                         DropdownMenuItem(
@@ -433,6 +439,13 @@ fun App(vm: AppViewModel) {
                     label = { Text("Setări") }
                 )
             }
+        },
+        floatingActionButton = {
+            if (screen == Screen.WORKS) ExtendedFloatingActionButton(
+                onClick = { showWizard = true },
+                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                text = { Text("Necesar nou") }
+            )
         }
     ) { pad ->
         Box(Modifier.padding(pad)) {
@@ -479,6 +492,19 @@ fun App(vm: AppViewModel) {
         label = "Nume categorie",
         onDismiss = { showAddCategory = false },
         onConfirm = { vm.addCategory(it); showAddCategory = false }
+    )
+    if (showWizard) WizardDialog(
+        vm,
+        onDismiss = { showWizard = false },
+        onApplied = { plan ->
+            showWizard = false
+            screen = Screen.MATERIALS
+            Toast.makeText(
+                context,
+                "Necesar pregătit: ${plan.totalPieces} buc în ${plan.items.size} linii — continuă manual",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     )
     if (confirmReset) ConfirmDialog(
         title = "Golești cantitățile?",
@@ -937,6 +963,34 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                         }
                     }
                 }
+                if (vm.workPdfBoxes != null || vm.workExtraLabor.isNotEmpty()) item(key = "extras") {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                buildString {
+                                    if (vm.workKind == "pv") append("Sistem fotovoltaic. ")
+                                    if (vm.workPdfBoxes == true) append("Instalație nouă: dozele, tuburile și carcasa tabloului intră în PDF. ")
+                                    if (vm.workPdfBoxes == false) append("Dozele nu intră în PDF la această lucrare. ")
+                                    vm.workExtraLabor.forEach {
+                                        append("Manoperă: ${it.name} = ${String.format(Locale.US, "%.0f", it.value)} lei. ")
+                                    }
+                                }.trim(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                            )
+                            TextButton(onClick = { vm.clearWorkExtras() }) { Text("Anulează") }
+                        }
+                    }
+                }
                 if (vm.owned.isNotEmpty()) item(key = "ownedsum") {
                     Surface(
                         color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
@@ -1291,7 +1345,8 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
     if (vm.works.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                "Nicio lucrare salvată.\nDin ecranul Necesar apasă „Salvează lucrarea”.",
+                "Nicio lucrare salvată.\nApasă „+ Necesar nou” pentru asistent sau bifează " +
+                    "materiale și apoi „Salvează lucrarea” din Necesar.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

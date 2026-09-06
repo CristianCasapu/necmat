@@ -9,6 +9,17 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
   module, tablou electric, cabluri etc.), complet editabilă: adaugi, redenumești,
   ștergi, reordonezi — totul se salvează automat pe telefon
 - Cantități cu butoane **+ / −** sau introducere directă
+- **Asistent pentru necesar nou** („+ Necesar nou” în Lucrări sau din meniul
+  ⋮): alegi *Instalație electrică* (rezidențial / comercial / industrial,
+  branșament mono / trifazic și ATR, casă / apartament, numărul de dormitoare,
+  băi, bucătării, living, tipul de aparataj cu marcă, instalație nouă sau
+  existentă cu doze montate / cabluri trase / tablou păstrat) sau *Sistem
+  fotovoltaic* (kW, putere panou, invertor mono / tri, baterii, acoperiș,
+  dificultate 130–150 €/kW și curs euro). Primești un necesar de start cu
+  cel puțin 2 prize, 1 întrerupător și 1 bec pe încăpere, doze, cabluri,
+  tuburi și tablou dimensionat pe circuite, respectiv panouri, structură,
+  tablouri DC / AC și manopera pe kW în oferta de manoperă; apoi continui
+  manual. La instalație nouă dozele și carcasa tabloului intră în PDF
 - Prețuri opționale per material, cu valoare totală calculată
 - **Lucrări salvate** cu nume, dată și date client (client / adresă / telefon),
   cu duplicare și reîncărcare în editor

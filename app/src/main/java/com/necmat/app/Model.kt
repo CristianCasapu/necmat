@@ -94,7 +94,13 @@ data class Work(
     /** Materiale pe care clientul le are deja — se scad din lista de cumpărături. */
     val owned: List<OwnedMaterial> = emptyList(),
     /** Legătura cu fișa clientului (v1.22); câmpurile text rămân pentru PDF și compatibilitate. */
-    val clientId: Long? = null
+    val clientId: Long? = null,
+    /** v1.35: null = după setarea globală; true = dozele / carcasele intră în PDF (instalație nouă). */
+    val pdfIncludeBoxes: Boolean? = null,
+    /** v1.35: linii de manoperă fixe pe lucrare (ex. instalare fotovoltaic per kW). */
+    val extraLabor: List<LaborLine> = emptyList(),
+    /** v1.35: "electric" / "pv" / "" — tipul ales în asistent (informativ). */
+    val kind: String = ""
 ) {
     val totalTypes get() = categories.sumOf { it.materials.size }
     val totalPieces get() = categories.sumOf { c -> c.materials.sumOf { it.qty } }
@@ -390,7 +396,7 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
                 value = acc.value
             )
         }
-    } + tablouLines
+    } + tablouLines + work.extraLabor
 
     return LaborQuote(
         lines, cfg.travel, cfg.food, cfg.consumables,
@@ -629,6 +635,30 @@ object Repo {
             .put("template", w.isTemplate)
             .put("owned", ownedToJson(w.owned))
             .apply { w.clientId?.let { put("clientId", it) } }
+            .apply { w.pdfIncludeBoxes?.let { put("pdfBoxes", it) } }
+            .apply { if (w.extraLabor.isNotEmpty()) put("extraLabor", laborLinesToJson(w.extraLabor)) }
+            .apply { if (w.kind.isNotBlank()) put("kind", w.kind) }
+    }
+
+    fun laborLinesToJson(lines: List<LaborLine>): JSONArray {
+        val arr = JSONArray()
+        lines.forEach { l ->
+            arr.put(
+                JSONObject().put("name", l.name).put("qty", l.qty)
+                    .put("unitPrice", l.unitPrice).put("value", l.value)
+            )
+        }
+        return arr
+    }
+
+    fun laborLinesFromJson(arr: JSONArray?): List<LaborLine> {
+        if (arr == null) return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val qty = o.optInt("qty", 1)
+            val unit = o.optDouble("unitPrice", 0.0)
+            LaborLine(o.optString("name", ""), qty, unit, o.optDouble("value", qty * unit))
+        }.filter { it.name.isNotBlank() }
     }
 
     private fun workFromJson(w: JSONObject): Work {
@@ -643,7 +673,10 @@ object Repo {
             phone = w.optString("phone", ""),
             isTemplate = w.optBoolean("template", false),
             owned = ownedFromJson(w.optJSONArray("owned")),
-            clientId = if (w.has("clientId") && !w.isNull("clientId")) w.getLong("clientId") else null
+            clientId = if (w.has("clientId") && !w.isNull("clientId")) w.getLong("clientId") else null,
+            pdfIncludeBoxes = if (w.has("pdfBoxes") && !w.isNull("pdfBoxes")) w.getBoolean("pdfBoxes") else null,
+            extraLabor = laborLinesFromJson(w.optJSONArray("extraLabor")),
+            kind = w.optString("kind", "")
         )
     }
 
@@ -1000,7 +1033,36 @@ object Repo {
         "Tablou electric",
         "Doze legături",
         "Cabluri și tuburi (m)",
-        "Corpuri de iluminat (montaj)"
+        "Corpuri de iluminat (montaj)",
+        "Sistem fotovoltaic"
+    )
+
+    /** v12 (v1.35): componente pentru sisteme fotovoltaice. */
+    val pvItems = listOf(
+        "Panou fotovoltaic 410 W", "Panou fotovoltaic 450 W", "Panou fotovoltaic 500 W",
+        "Panou fotovoltaic 550 W", "Panou fotovoltaic 600 W",
+        "Invertor hibrid monofazic 3 kW", "Invertor hibrid monofazic 5 kW",
+        "Invertor hibrid monofazic 6 kW", "Invertor hibrid monofazic 8 kW",
+        "Invertor hibrid monofazic 10 kW",
+        "Invertor hibrid trifazic 6 kW", "Invertor hibrid trifazic 8 kW",
+        "Invertor hibrid trifazic 10 kW", "Invertor hibrid trifazic 12 kW",
+        "Invertor hibrid trifazic 15 kW", "Invertor hibrid trifazic 20 kW",
+        "Invertor hibrid trifazic 30 kW",
+        "Baterie LiFePO4 5 kWh", "Baterie LiFePO4 10 kWh",
+        "Cârlig țiglă (set/panou)", "Suport tablă (set/panou)", "Structură balast terasă (set/panou)",
+        "Șină aluminiu 4,2 m", "Clemă mijloc", "Clemă capăt", "Îmbinare șină",
+        "Cutie protecții DC (tablou DC)", "Siguranță DC 1000 V 16 A", "Separator DC 1000 V",
+        "Descărcător supratensiune DC 1000 V", "Conector MC4 (pereche)",
+        "Cutie protecții AC (tablou AC)", "MCB 1P+N 32 A invertor", "MCB 3P 32 A invertor",
+        "Diferențial tip A 40 A 30 mA (2P)", "Diferențial tip A 40 A 30 mA (4P)",
+        "Descărcător supratensiune AC Tip 2", "Contor bidirecțional (smart meter)",
+        "Electrod împământare + piesă de separație"
+    )
+
+    /** v12: cabluri specifice fotovoltaicului, în categoria de cabluri. */
+    val cableExtrasV12 = listOf(
+        "Cablu solar 4 mm²", "Cablu solar 6 mm²",
+        "Cablu împământare 16 mm² (galben-verde)", "Cablu baterie 25 mm²"
     )
 
     /** Corpurile de iluminat — doar montaj, intră în oferta de manoperă. */
@@ -1116,8 +1178,38 @@ object Repo {
                 *(listOf("Cablu CYY-F 3x1.5", "Cablu CYY-F 3x2.5", "Tub copex Ø16", "Tub copex Ø20") +
                     cableExtrasV11).toTypedArray()
             ),
-            cat("Corpuri de iluminat (montaj)", *lightingItems.toTypedArray())
+            cat("Corpuri de iluminat (montaj)", *lightingItems.toTypedArray()),
+            cat("Sistem fotovoltaic", *pvItems.toTypedArray())
         )
+    }
+
+    /** Migrare v12: categoria „Sistem fotovoltaic” + cablurile PV (aditiv, idempotent). */
+    fun migrateV12(cats: List<Category>, newId: () -> Long): List<Category> {
+        var out = cats.map { c ->
+            if (!isCableCategory(c.name)) c
+            else {
+                var cc = c
+                cableExtrasV12.forEach { name ->
+                    if (cc.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                        cc = cc.copy(materials = cc.materials + Material(newId(), name))
+                    }
+                }
+                cc
+            }
+        }
+        val idx = out.indexOfFirst { it.name.equals("Sistem fotovoltaic", ignoreCase = true) }
+        if (idx < 0) {
+            out = out + Category(newId(), "Sistem fotovoltaic", pvItems.map { Material(newId(), it) })
+        } else {
+            var pv = out[idx]
+            pvItems.forEach { name ->
+                if (pv.materials.none { it.name.equals(name, ignoreCase = true) }) {
+                    pv = pv.copy(materials = pv.materials + Material(newId(), name))
+                }
+            }
+            out = out.mapIndexed { i, c -> if (i == idx) pv else c }
+        }
+        return out
     }
 
     /**
@@ -1136,6 +1228,7 @@ object Repo {
         out = migrateV9(out, newId)
         out = migrateV10(out)
         out = migrateV11(out, newId)
+        out = migrateV12(out, newId)
         return fixDuplicateIds(out, newId)
     }
 
