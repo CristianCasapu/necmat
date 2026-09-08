@@ -44,13 +44,19 @@ data class AppSettings(
     /** Notificare de dimineață cu programul zilei. */
     val morningSummary: Boolean = false,
     /** Ora rezumatului de dimineață (0–23). */
-    val morningHour: Int = 7
+    val morningHour: Int = 7,
+    /** v1.36: categoria „Sistem fotovoltaic” + opțiunea din asistent (ascunse implicit). */
+    val showPv: Boolean = false
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     var categories by mutableStateOf(Repo.load(app))
         private set
+
+    /** Categoriile afișate în Materiale / Necesar: fără „Sistem fotovoltaic” cât timp e ascuns. */
+    val visibleCategories: List<Category>
+        get() = visibleCategories(categories, settings.showPv)
 
     var works by mutableStateOf(Repo.loadWorks(app))
         private set
@@ -115,36 +121,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (replace) {
             clearOwned()
         }
-        update { cats ->
-            var result = if (replace)
-                cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
-            else cats
-            plan.items.forEach { item ->
-                val idx = result.indexOfFirst { it.name.equals(item.category, ignoreCase = true) }
-                if (idx < 0) {
-                    result = result + Category(
-                        newId(), item.category, listOf(Material(newId(), item.material, item.qty))
-                    )
-                } else {
-                    val cat = result[idx]
-                    val mIdx = cat.materials.indexOfFirst { normalizeName(it.name) == normalizeName(item.material) }
-                    val updated = if (mIdx >= 0) cat.copy(materials = cat.materials.mapIndexed { i, m ->
-                        if (i == mIdx) m.copy(qty = m.qty + item.qty) else m
-                    }) else cat.copy(materials = cat.materials + Material(newId(), item.material, item.qty))
-                    result = result.mapIndexed { i, c -> if (i == idx) updated else c }
-                }
-            }
-            // mărci și modul de montaj al cablurilor
-            result = result.map { c ->
-                var cc = c
-                plan.brandFor[c.name]?.let { (b, m) -> cc = cc.copy(brand = b, model = m) }
-                if (plan.cableMode.isNotBlank() && isCableCategory(c.name)) cc = cc.copy(phase = plan.cableMode)
-                if (kind == "electric" && c.name.equals("Tablou electric", ignoreCase = true) && plan.tablouPhase.isNotBlank())
-                    cc = cc.copy(phase = plan.tablouPhase)
-                cc
-            }
-            result
-        }
+        update { cats -> applyPlanToCatalog(cats, plan, kind, replace) { newId() } }
         setWorkExtras(
             kind,
             plan.pdfIncludeBoxes ?: (if (replace) null else workPdfBoxes),
@@ -337,6 +314,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         TypePalette.loadJson(prefs().getString("type_colors", null))
         // reminderele se reprogramează la fiecare pornire (alarmele nu supraviețuiesc actualizărilor)
         syncReminders()
+        // v1.36: ordinea pe grupuri (doze → aparataj) se aplică și listelor existente
+        val grouped = sortGrouped(categories)
+        if (grouped != categories) {
+            categories = grouped
+            viewModelScope.launch(Dispatchers.IO) {
+                Repo.save(getApplication(), categories)
+            }
+        }
         // reparare id-uri duplicate (generatorul vechi putea produce coliziuni)
         val deduped = Repo.fixDuplicateIds(categories) { newId() }
         if (deduped != categories) {
@@ -445,8 +430,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val now = System.currentTimeMillis()
         val clean = c.copy(
             name = c.name.trim(), phone = c.phone.trim(), address = c.address.trim(),
-            email = c.email.trim(), cnp = if (settings.storeCnp) c.cnp.trim() else "",
-            notes = c.notes.trim(), updatedAt = now
+            email = c.email.trim(), cnp = if (settings.storeCnp && !c.isCompany) c.cnp.trim() else "",
+            notes = c.notes.trim(), updatedAt = now,
+            kind = if (c.kind == Client.KIND_PJ) Client.KIND_PJ else Client.KIND_PF,
+            cui = if (c.isCompany) normalizeCui(c.cui) else ""
         )
         val exists = clients.any { it.id == clean.id }
         val saved = if (exists) clean
@@ -472,22 +459,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * existent cu același telefon / nume + adresă, altfel unul nou din datele lucrării.
      */
     private fun resolveClientId(
-        client: String, phone: String, address: String, clientId: Long?, cnp: String = ""
+        client: String, phone: String, address: String, clientId: Long?, cnp: String = "",
+        kind: String = Client.KIND_PF, cui: String = ""
     ): Long? {
         val existingId = when {
             clientId != null && clients.any { it.id == clientId } -> clientId
             client.isBlank() && phone.isBlank() -> return null
             else -> findDuplicateClient(Client(0L, client.trim(), phone.trim(), address.trim()), clients)?.id
         }
+        val cleanCui = normalizeCui(cui)
         if (existingId != null) {
             // CNP-ul citit de pe act completează fișa existentă, dacă era goală
-            val existing = clients.first { it.id == existingId }
+            var existing = clients.first { it.id == existingId }
+            var changed = false
             if (cnp.isNotBlank() && settings.storeCnp && existing.cnp.isBlank() && isValidCnp(cnp)) {
-                upsertClient(existing.copy(cnp = cnp))
+                existing = existing.copy(cnp = cnp); changed = true
             }
+            // tipul (PF / PJ) și CUI-ul din formular actualizează fișa
+            if (kind != existing.kind || (cleanCui.isNotBlank() && cleanCui != existing.cui)) {
+                existing = existing.copy(kind = kind, cui = if (kind == Client.KIND_PJ) cleanCui.ifBlank { existing.cui } else "")
+                changed = true
+            }
+            if (changed) upsertClient(existing)
             return existingId
         }
-        val probe = Client(0L, client.trim(), phone.trim(), address.trim(), cnp = cnp.trim())
+        val probe = Client(
+            0L, client.trim(), phone.trim(), address.trim(), cnp = cnp.trim(),
+            kind = kind, cui = if (kind == Client.KIND_PJ) cleanCui else ""
+        )
         return upsertClient(probe.copy(name = probe.name.ifBlank { "Client fără nume" })).id
     }
 
@@ -507,7 +506,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun update(transform: (List<Category>) -> List<Category>) {
-        categories = transform(categories)
+        categories = sortGrouped(transform(categories))
         persist()
         trimOwned()
     }
@@ -536,7 +535,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun purchasableLines(): List<Category> {
         val base = Work(
             0L, "", 0L,
-            categories.map { c -> c.copy(materials = c.materials.filter { it.qty > 0 }) }
+            visibleCategories.map { c -> c.copy(materials = c.materials.filter { it.qty > 0 }) }
                 .filter { it.materials.isNotEmpty() }
         )
         return base.shoppingList(settings.autoAccessories, includeBoxesNow).categories
@@ -545,21 +544,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun purchasableQty(): Map<String, Int> {
         val m = mutableMapOf<String, Int>()
         purchasableLines().forEach { c ->
-            c.materials.forEach { mat -> m.merge(normalizeName(mat.name), mat.qty, Int::plus) }
+            c.materials.forEach { mat -> m.merge(mat.matchKey(), mat.qty, Int::plus) }
         }
         return m
     }
 
-    /** Setează câte bucăți are clientul; 0 scoate linia. Plafonat la necesar. */
-    fun setOwned(name: String, qty: Int, category: String = "") {
-        val key = normalizeName(name)
-        val max = purchasableQty()[key] ?: 0
+    /**
+     * Setează câte bucăți are clientul; 0 scoate linia. Plafonat la necesar.
+     * Potrivirea se face după cheia materialului (rezistă la redenumiri).
+     */
+    fun setOwned(name: String, qty: Int, category: String = "", key: String = "", catKey: String = "") {
+        val item = OwnedMaterial(name.trim(), qty, category, key = key, catKey = catKey)
+        val mk = item.matchKey()
+        val max = purchasableQty()[mk] ?: 0
         val q = qty.coerceIn(0, max)
-        val rest = owned.filter { normalizeName(it.name) != key }
-        owned = if (q <= 0) rest else rest + OwnedMaterial(name.trim(), q, category)
+        val rest = owned.filter { it.matchKey() != mk }
+        owned = if (q <= 0) rest else rest + item.copy(qty = q)
         AppLog.i("Client", "Material existent la client: $name = $q")
         persistOwned()
     }
+
+    fun setOwned(item: OwnedMaterial, qty: Int) =
+        setOwned(item.name, qty, item.category, item.key, item.catKey)
 
     fun removeOwned(name: String) = setOwned(name, 0)
 
@@ -574,7 +580,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (owned.isEmpty()) return
         val avail = purchasableQty()
         val trimmed = owned.mapNotNull { o ->
-            val max = avail[normalizeName(o.name)] ?: 0
+            val max = avail[o.matchKey()] ?: 0
             if (max <= 0) null else o.copy(qty = o.qty.coerceAtMost(max))
         }
         if (trimmed != owned) {
@@ -738,12 +744,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         client: String = "",
         address: String = "",
         phone: String = "",
-        clientId: Long? = null
+        clientId: Long? = null,
+        cui: String = ""
     ): Work = Work(
         id = newId(),
         name = name.trim(),
         date = System.currentTimeMillis(),
-        categories = categories
+        categories = sortGrouped(visibleCategories)
             .map { c -> c.copy(materials = c.materials.filter { it.qty > 0 }) }
             .filter { it.materials.isNotEmpty() },
         client = client.trim(),
@@ -753,7 +760,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         clientId = clientId,
         pdfIncludeBoxes = workPdfBoxes,
         extraLabor = workExtraLabor,
-        kind = workKind
+        kind = workKind,
+        cui = normalizeCui(cui)
     )
 
     /**
@@ -767,10 +775,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         phone: String,
         overwriteId: Long? = null,
         clientId: Long? = null,
-        cnp: String = ""
+        cnp: String = "",
+        kind: String = Client.KIND_PF,
+        cui: String = ""
     ): Boolean {
-        val cid = resolveClientId(client, phone, address, clientId, cnp)
-        val w = snapshot(name, client, address, phone, cid)
+        val cid = resolveClientId(client, phone, address, clientId, cnp, kind, cui)
+        val w = snapshot(name, client, address, phone, cid, if (kind == Client.KIND_PJ) cui else "")
         if (w.categories.isEmpty()) return false
         works = replaceWork(works, w, overwriteId)
         persistWorks()
@@ -817,62 +827,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun loadWorkCategories(work: Work) = update { cats ->
-        var result = cats.map { c -> c.copy(materials = c.materials.map { it.copy(qty = 0) }) }
-        work.categories.forEach { wc ->
-            val idx = result.indexOfFirst { it.name.equals(wc.name, ignoreCase = true) }
-            if (idx >= 0) {
-                var target = result[idx]
-                wc.materials.forEach { wm ->
-                    val mIdx = target.materials.indexOfFirst {
-                        it.name.equals(wm.name, ignoreCase = true)
-                    }
-                    target = if (mIdx >= 0) {
-                        target.copy(materials = target.materials.mapIndexed { i, m ->
-                            if (i == mIdx) m.copy(qty = wm.qty) else m
-                        })
-                    } else {
-                        target.copy(
-                            materials = target.materials +
-                                Material(newId(), wm.name, wm.qty, wm.price)
-                        )
-                    }
-                }
-                if (wc.brand.isNotBlank() || wc.model.isNotBlank() || wc.phase.isNotBlank()) {
-                    target = target.copy(brand = wc.brand, model = wc.model, phase = wc.phase)
-                }
-                result = result.mapIndexed { i, c -> if (i == idx) target else c }
-            } else {
-                result = result + Category(
-                    newId(), wc.name,
-                    wc.materials.map { Material(newId(), it.name, it.qty, it.price) },
-                    brand = wc.brand, model = wc.model, phase = wc.phase
-                )
-            }
-        }
-        result
+        mergeWorkIntoCatalog(cats, work) { newId() }
     }
 
     /** Text pentru Copiază/Trimite — același conținut ca PDF-ul de materiale. */
     fun summaryText(): String {
         val prepared = preparePdfWork(snapshot("Necesar"))
         val sb = StringBuilder("Necesar materiale\n")
-        prepared.categories.forEach { c ->
-            if (c.materials.isEmpty()) return@forEach
-            sb.append("\n").append(c.name)
-            if (c.brandLabel.isNotEmpty()) sb.append(" — ").append(c.brandLabel)
-            sb.append(":\n")
-            val um = if (c.name.contains("(m)")) "m" else "buc"
-            c.materials.forEach { m ->
-                sb.append("  • ").append(m.name).append(" — ").append(m.qty)
-                    .append(" ").append(um).append("\n")
+        groupSections(prepared.categories.filter { it.materials.isNotEmpty() }).forEach { section ->
+            if (section.showHeader) sb.append("\n== ").append(section.group.label.uppercase()).append(" ==\n")
+            section.categories.forEach { c ->
+                sb.append("\n").append(c.name)
+                if (c.brandLabel.isNotEmpty()) sb.append(" — ").append(c.brandLabel)
+                sb.append(":\n")
+                val um = c.unit
+                c.materials.forEach { m ->
+                    sb.append("  • ").append(m.name).append(" — ").append(m.qty)
+                        .append(" ").append(um).append("\n")
+                }
             }
         }
         if (prepared.owned.isNotEmpty()) {
             sb.append("\nMateriale existente la client (nu sunt în listă):\n")
-            prepared.owned.forEach { o ->
-                val um = if (o.category.contains("(m)")) "m" else "buc"
-                sb.append("  • ").append(o.name).append(" — ").append(o.qty)
-                    .append(" ").append(um).append("\n")
+            prepared.owned.groupBy { it.category }.forEach { (cat, items) ->
+                if (cat.isNotBlank()) sb.append("  ").append(cat).append(":\n")
+                items.forEach { o ->
+                    sb.append("  • ").append(o.name).append(" — ").append(o.qty)
+                        .append(" ").append(o.unit).append("\n")
+                }
             }
         }
         return sb.toString()
@@ -928,19 +910,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * (fără carcase — au preț pe etaj), tuburi / jgheaburi (fără cabluri — au
      * preț pe metru după modul de montaj). Modulele nu au manoperă proprie.
      */
-    fun laborItems(): List<Pair<String, List<String>>> {
+    fun laborItems(): List<Pair<String, List<LaborItem>>> {
         val seen = mutableSetOf<String>()
-        return categories.mapNotNull { c ->
-            if (c.name.trim().equals("module", ignoreCase = true)) return@mapNotNull null
-            val cn = c.name.lowercase()
-            val cableCat = isCableCategory(c.name)
-            val eligible = isMontajCategory(c.name) || cn.contains("doz") || cn.contains("aparataj") ||
-                cn.contains("tablou") || cableCat
-            if (!eligible) return@mapNotNull null
-            val names = c.materials.map { it.name }.filter { n ->
-                !isTablouCarcasa(n) && !(cableCat && isCableItem(n)) && seen.add(n.trim().lowercase())
-            }
-            if (names.isEmpty()) null else c.name to names
+        val eligibleKinds = setOf(
+            CategoryKeys.ILUMINAT, CategoryKeys.DOZE_APARAT, CategoryKeys.DOZE_MODULARE,
+            CategoryKeys.DOZE_LEGATURI, CategoryKeys.APARATAJ_INCASTRAT, CategoryKeys.APARATAJ_APLICAT,
+            CategoryKeys.TABLOU, CategoryKeys.CABLURI
+        )
+        return visibleCategories.mapNotNull { c ->
+            val k = c.kind
+            if (k !in eligibleKinds) return@mapNotNull null
+            val cableCat = k == CategoryKeys.CABLURI
+            val items = c.materials.filter { m ->
+                val n = m.catalogName
+                !isTablouCarcasa(n) && !(cableCat && isCableItem(n)) && seen.add(m.laborKey)
+            }.map { LaborItem(it.name, it.laborKey) }
+            if (items.isEmpty()) null else c.name to items
         }
     }
 
@@ -966,6 +951,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .put("reminderDefaultMin", settings.reminderDefaultMin)
         .put("morningSummary", settings.morningSummary)
         .put("morningHour", settings.morningHour)
+        .put("showPv", settings.showPv)
         .put("typeColors", TypePalette.toJson())
 
     fun backupJson(): String =
@@ -1005,7 +991,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     remindersEnabled = s.optBoolean("remindersEnabled", settings.remindersEnabled),
                     reminderDefaultMin = s.optInt("reminderDefaultMin", settings.reminderDefaultMin),
                     morningSummary = s.optBoolean("morningSummary", settings.morningSummary),
-                    morningHour = s.optInt("morningHour", settings.morningHour)
+                    morningHour = s.optInt("morningHour", settings.morningHour),
+                    showPv = s.optBoolean("showPv", settings.showPv)
                 )
             )
             s.optString("typeColors", "").takeIf { it.isNotBlank() }?.let { json ->
@@ -1108,7 +1095,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             remindersEnabled = p.getBoolean("rem_enabled", true),
             reminderDefaultMin = p.getInt("rem_default", 60),
             morningSummary = p.getBoolean("rem_morning", false),
-            morningHour = p.getInt("rem_hour", 7)
+            morningHour = p.getInt("rem_hour", 7),
+            showPv = p.getBoolean("show_pv", false)
         )
     }
 
@@ -1144,6 +1132,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("rem_default", s.reminderDefaultMin)
             .putBoolean("rem_morning", s.morningSummary)
             .putInt("rem_hour", s.morningHour)
+            .putBoolean("show_pv", s.showPv)
             .apply()
         if (recheckOwned) trimOwned()
         if (s.remindersEnabled != old.remindersEnabled || s.reminderDefaultMin != old.reminderDefaultMin ||
@@ -1156,7 +1145,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * accesorii automate → − materiale existente la client → filtrare.
      */
     fun preparePdfWork(work: Work): Work {
-        val filtered = work.shoppingList(
+        val filtered = work.copy(categories = sortGrouped(work.categories)).shoppingList(
             settings.autoAccessories, effectiveIncludeBoxes(work, settings.includeBoxesInPdf), settings.ownedInPdf
         )
         // prețurile de achiziție apar doar dacă sunt activate din Setări

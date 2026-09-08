@@ -66,6 +66,7 @@ data class PvInput(
     val laborLei: Double get() = kw * difficulty.eurPerKw * eurRate
 }
 
+/** O linie din plan: cheia categoriei ([CategoryKeys]), numele de catalog al materialului, cantitatea. */
 data class WizardItem(val category: String, val material: String, val qty: Int)
 
 /** Planul produs de asistent. */
@@ -75,7 +76,7 @@ data class WizardPlan(
     val pdfIncludeBoxes: Boolean?,
     val extraLabor: List<LaborLine>,
     val notes: List<String>,
-    /** Marca de setat pe categoriile de aparataj (nume categorie → (marcă, model)). */
+    /** Marca de setat pe categoriile de aparataj (cheie categorie → (marcă, model)). */
     val brandFor: Map<String, Pair<String, String>> = emptyMap(),
     /** Modul de montaj pentru cabluri: "incastrat" / "aparent". */
     val cableMode: String = "",
@@ -87,16 +88,17 @@ data class WizardPlan(
 
 object WizardEstimator {
 
-    const val CAT_DOZE_APARAT = "Doze aparat încastrate"
-    const val CAT_APARATAJ_INCASTRAT = "Aparataj încastrat"
-    const val CAT_DOZE_MODULARE = "Doze modulare"
-    const val CAT_MODULE = "Module"
-    const val CAT_APARATAJ_APLICAT = "Aparataj aplicat"
-    const val CAT_TABLOU = "Tablou electric"
-    const val CAT_LEGATURI = "Doze legături"
-    const val CAT_CABLURI = "Cabluri și tuburi (m)"
-    const val CAT_ILUMINAT = "Corpuri de iluminat (montaj)"
-    const val CAT_PV = "Sistem fotovoltaic"
+    // v1.36: planul lucrează pe cheile stabile ale categoriilor, nu pe nume
+    const val CAT_DOZE_APARAT = CategoryKeys.DOZE_APARAT
+    const val CAT_APARATAJ_INCASTRAT = CategoryKeys.APARATAJ_INCASTRAT
+    const val CAT_DOZE_MODULARE = CategoryKeys.DOZE_MODULARE
+    const val CAT_MODULE = CategoryKeys.MODULE
+    const val CAT_APARATAJ_APLICAT = CategoryKeys.APARATAJ_APLICAT
+    const val CAT_TABLOU = CategoryKeys.TABLOU
+    const val CAT_LEGATURI = CategoryKeys.DOZE_LEGATURI
+    const val CAT_CABLURI = CategoryKeys.CABLURI
+    const val CAT_ILUMINAT = CategoryKeys.ILUMINAT
+    const val CAT_PV = CategoryKeys.PV
 
     private class Acc {
         val items = linkedMapOf<Pair<String, String>, Int>()

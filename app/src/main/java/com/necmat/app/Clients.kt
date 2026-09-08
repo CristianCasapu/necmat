@@ -19,11 +19,54 @@ data class Client(
     val cnp: String = "",
     val notes: String = "",
     val createdAt: Long = 0L,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    /** v1.36: [KIND_PF] (persoană fizică, implicit) sau [KIND_PJ] (persoană juridică). */
+    val kind: String = KIND_PF,
+    /** v1.36: CUI-ul firmei (doar la persoană juridică; opțional, validat). */
+    val cui: String = ""
 ) {
     /** Localitatea (ultimul segment după virgulă) — pentru listă. */
     val locality: String
         get() = address.split(",").map { it.trim() }.lastOrNull { it.isNotBlank() } ?: ""
+
+    val isCompany: Boolean get() = kind == KIND_PJ
+    val kindLabel: String get() = if (isCompany) "Persoană juridică" else "Persoană fizică"
+
+    companion object {
+        const val KIND_PF = "pf"
+        const val KIND_PJ = "pj"
+    }
+}
+
+private const val CUI_WEIGHTS = "753217532"
+
+/** CUI curățat: majuscule, fără spații / puncte; prefixul RO e păstrat dacă există. */
+fun normalizeCui(cui: String): String = cui.uppercase().filter { it.isLetterOrDigit() }
+
+/**
+ * Validează un CUI românesc: prefix „RO” opțional, 2–10 cifre, ultima fiind cifra de
+ * control (ponderile 7 5 3 2 1 7 5 3 2 pe cifrele completate la 9 cu zerouri în față,
+ * suma × 10 mod 11, iar 10 → 0). Gol = valid (câmp opțional).
+ */
+fun isValidCui(cui: String): Boolean {
+    val n = normalizeCui(cui).removePrefix("RO")
+    if (n.isEmpty()) return true
+    if (n.length !in 2..10 || !n.all { it.isDigit() }) return false
+    val body = n.dropLast(1).padStart(9, '0')
+    var sum = 0
+    for (i in 0 until 9) sum += (body[i] - '0') * (CUI_WEIGHTS[i] - '0')
+    var control = (sum * 10) % 11
+    if (control == 10) control = 0
+    return control == n.last() - '0'
+}
+
+/** Cifra de control pentru un CUI (fără RO, fără ultima cifră) — pentru CUI-uri fictive în teste. */
+fun cuiControlDigit(digits: String): Int {
+    val body = digits.padStart(9, '0')
+    var sum = 0
+    for (i in 0 until 9) sum += (body[i] - '0') * (CUI_WEIGHTS[i] - '0')
+    val c = (sum * 10) % 11
+    return if (c == 10) 0 else c
 }
 
 /** Doar cifrele; prefixul internațional românesc (+40 / 0040) devine 0. */
@@ -155,6 +198,7 @@ object ClientsRepo {
         .put("id", c.id).put("name", c.name).put("phone", c.phone)
         .put("address", c.address).put("email", c.email).put("cnp", c.cnp)
         .put("notes", c.notes).put("createdAt", c.createdAt).put("updatedAt", c.updatedAt)
+        .put("kind", c.kind).put("cui", c.cui)
 
     fun fromJson(o: JSONObject): Client = Client(
         id = o.getLong("id"),
@@ -165,7 +209,9 @@ object ClientsRepo {
         cnp = o.optString("cnp", ""),
         notes = o.optString("notes", ""),
         createdAt = o.optLong("createdAt", 0L),
-        updatedAt = o.optLong("updatedAt", 0L)
+        updatedAt = o.optLong("updatedAt", 0L),
+        kind = if (o.optString("kind", "") == Client.KIND_PJ) Client.KIND_PJ else Client.KIND_PF,
+        cui = o.optString("cui", "")
     )
 
     fun listToJson(list: List<Client>): JSONArray {

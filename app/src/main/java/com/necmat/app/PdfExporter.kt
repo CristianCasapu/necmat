@@ -38,6 +38,7 @@ object PdfExporter {
     private val ACCENT = Color.rgb(24, 62, 110)        // albastru închis
     private val ACCENT_DARK = Color.rgb(14, 40, 76)
     private val ACCENT_LIGHT = Color.rgb(226, 234, 245)
+    private val GROUP_BG = Color.rgb(203, 216, 235)      // antetul grupului de categorii (v1.36)
     private val BAND_MUTED = Color.rgb(196, 211, 232)
     private val CARD_BG = Color.rgb(246, 248, 251)
     private val ROW_ALT = Color.rgb(247, 249, 252)
@@ -91,6 +92,7 @@ object PdfExporter {
         val thCenter = paint(9.5f, Color.WHITE, bold = true, align = Paint.Align.CENTER)
         val thRight = paint(9.5f, Color.WHITE, bold = true, align = Paint.Align.RIGHT)
         val cat = paint(10f, ACCENT, bold = true)
+        val group = paint(9.5f, ACCENT_DARK, bold = true).apply { letterSpacing = 0.08f }
         val catBrand = paint(9f, TEXT_MUTED, italic = true, align = Paint.Align.RIGHT)
         val item = paint(10f, TEXT)
         val itemBold = paint(10f, TEXT, bold = true)
@@ -262,6 +264,7 @@ object PdfExporter {
     private fun clientParty(title: String, work: Work, addressLabel: String = "") =
         Party(title, buildList {
             if (work.client.isNotBlank()) add(work.client to true)
+            if (work.cui.isNotBlank()) add("CUI: ${work.cui}" to false)
             if (work.address.isNotBlank()) add((addressLabel + work.address) to false)
             if (work.phone.isNotBlank()) add("Tel.: ${work.phone}" to false)
         })
@@ -407,11 +410,24 @@ object PdfExporter {
             pg.y = y + 4f
             tableHeader()
 
-            // ---- tabel ----
+            // ---- tabel: grupuri (doze → aparataj) → categorii → materiale ----
             var nr = 0
-            work.categories.forEach { cat ->
-                if (cat.materials.isEmpty()) return@forEach
-                val um = if (cat.name.contains("(m)")) "m" else "buc"
+            val sections = groupSections(work.categories.filter { it.materials.isNotEmpty() })
+            sections.forEach { section ->
+              if (section.showHeader) {
+                pg.ensure(ROW_H * 3 + 4f)
+                val c = pg.canvas
+                pt.fill.color = GROUP_BG
+                c.drawRect(tableL, pg.y, tableR, pg.y + ROW_H, pt.fill)
+                c.drawRect(tableL, pg.y, tableR, pg.y + ROW_H, pt.grid)
+                c.drawText(
+                    fit(section.group.label.uppercase(Locale.getDefault()), pt.group, tableR - tableL - 16f),
+                    tableL + 8f, pg.y + 14f, pt.group
+                )
+                pg.y += ROW_H
+              }
+              section.categories.forEach { cat ->
+                val um = cat.unit
 
                 pg.ensure(ROW_H * 2 + 4f)
                 var c = pg.canvas
@@ -422,7 +438,7 @@ object PdfExporter {
                 val brandW = if (brandText.isEmpty()) 0f else pt.catBrand.measureText(brandText) + 14f
                 val label = buildString {
                     append(cat.name.uppercase(Locale.getDefault()))
-                    if (cat.name.trim().equals("module", ignoreCase = true)) append("  (APARATAJ MODULAR)")
+                    if (cat.kind == CategoryKeys.MODULE && !section.showHeader) append("  (APARATAJ MODULAR)")
                 }
                 c.drawText(fit(label, pt.cat, tableR - colNameL - 12f - brandW), colNameL + 6f, pg.y + 14f, pt.cat)
                 if (brandText.isNotEmpty()) c.drawText(brandText, tableR - 6f, pg.y + 14f, pt.catBrand)
@@ -468,6 +484,7 @@ object PdfExporter {
                     }
                     pg.y += rowH
                 }
+              }
             }
 
             // ---- total ----
@@ -506,19 +523,27 @@ object PdfExporter {
                 c.drawText("MATERIALE PUSE LA DISPOZIȚIE DE CLIENT", tableL + 10f, pg.y + 14f, pt.ownedTitle)
                 c.drawText("deja existente — nu sunt incluse în lista de mai sus", tableR - 6f, pg.y + 14f, pt.ownedNote)
                 pg.y += ROW_H
-                work.owned.forEach { o ->
-                    val um = if (o.category.contains("(m)")) "m" else "buc"
-                    val lines = wrap(o.name, pt.item, tableR - tableL - 110f)
-                    val rowH = maxOf(ROW_H, lines.size * LINE_H + 8f)
-                    pg.ensure(rowH)
-                    c = pg.canvas
-                    val y0 = pg.y
-                    lines.forEachIndexed { li, line ->
-                        c.drawText(line, tableL + 10f, y0 + 14f + li * LINE_H, pt.item)
+                // grupate pe categorii (v1.36), în ordinea din lista de mai sus
+                work.owned.groupBy { it.category }.forEach { (catName, items) ->
+                    if (catName.isNotBlank()) {
+                        pg.ensure(ROW_H * 2)
+                        c = pg.canvas
+                        c.drawText(fit(catName, pt.itemBold, tableR - tableL - 20f), tableL + 10f, pg.y + 13f, pt.itemBold)
+                        pg.y += ROW_H - 3f
                     }
-                    c.drawText("${o.qty} $um", tableR - 6f, y0 + 14f, pt.rightBold)
-                    c.drawLine(tableL, y0 + rowH, tableR, y0 + rowH, pt.rule)
-                    pg.y += rowH
+                    items.forEach { o ->
+                        val lines = wrap(o.name, pt.item, tableR - tableL - 110f)
+                        val rowH = maxOf(ROW_H, lines.size * LINE_H + 8f)
+                        pg.ensure(rowH)
+                        c = pg.canvas
+                        val y0 = pg.y
+                        lines.forEachIndexed { li, line ->
+                            c.drawText(line, tableL + 18f, y0 + 14f + li * LINE_H, pt.item)
+                        }
+                        c.drawText("${o.qty} ${o.unit}", tableR - 6f, y0 + 14f, pt.rightBold)
+                        c.drawLine(tableL, y0 + rowH, tableR, y0 + rowH, pt.rule)
+                        pg.y += rowH
+                    }
                 }
             }
 

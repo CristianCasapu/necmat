@@ -8,6 +8,14 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
 - Listă de materiale organizată pe categorii (doze modulare, doze aparat,
   module, tablou electric, cabluri etc.), complet editabilă: adaugi, redenumești,
   ștergi, reordonezi — totul se salvează automat pe telefon
+- **Grupuri de materiale** (v1.36): categoriile sunt afișate pe grupuri, în
+  aceeași ordine în Materiale, Necesar și PDF — doze aparat încastrate →
+  aparataj încastrat, doze modulare → module → accesorii calculate, aparataj
+  aplicat, tablou, doze de legături, cabluri / tuburi, corpuri de iluminat.
+  Fiecare categorie standard și fiecare material au o **cheie stabilă**: poți
+  redenumi orice, iar actualizările, calculele și lucrările salvate le
+  recunosc în continuare. **Marca și modelul sunt obligatorii** la aparataj
+  (încastrat / modular / aplicat) și tablou înainte de salvare sau PDF
 - Cantități cu butoane **+ / −** sau introducere directă
 - **Asistent pentru necesar nou** („+ Necesar nou” în Lucrări sau din meniul
   ⋮): alegi *Instalație electrică* (rezidențial / comercial / industrial,
@@ -24,7 +32,9 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
 - **Lucrări salvate** cu nume, dată și date client (client / adresă / telefon),
   cu duplicare și reîncărcare în editor
 - **Clienți**: pagină proprie cu căutare, adăugare, editare, ștergere (cu
-  anulare), e-mail și CNP opționale (CNP doar local, mascat, niciodată în PDF),
+  anulare), **persoană fizică sau juridică** (la firme: CUI validat, afișat în
+  cardul Beneficiar din PDF), e-mail și CNP opționale (CNP doar local, mascat,
+  niciodată în PDF),
   fișă cu acțiuni rapide (sună / SMS / WhatsApp / e-mail / hartă), istoricul
   lucrărilor, „Lucrare nouă pentru acest client” și „Salvează în agenda
   telefonului”; același formular e folosit și la salvarea lucrării, cu sugestii
@@ -61,9 +71,12 @@ pentru o instalație electrică rezidențială și generezi PDF-ul pentru magazi
 - **Calcul automat de accesorii** la PDF: rame suport + rame ornament pentru
   fiecare doză modulară și obturatoare (priza dublă ocupă 2 module)
 - **Materiale existente la client**: secțiune în pagina Necesar unde treci ce
-  are deja clientul (module, siguranțe, rame); se scad din lista de cumpărături
-  *după* calculul accesoriilor, deci nu apar obturatoare false; oferta de
-  manoperă rămâne pe necesarul complet, iar PDF-ul le listează separat
+  are deja clientul (module, siguranțe, rame), grupate pe categorii; se scad din
+  lista de cumpărături *după* calculul accesoriilor, deci nu apar obturatoare
+  false; oferta de manoperă rămâne pe necesarul complet, iar PDF-ul le listează
+  separat, pe categorii
+- Categoria **Sistem fotovoltaic** și opțiunea din asistent sunt ascunse
+  implicit (Setări → „Sistem fotovoltaic” le reactivează; nimic nu se șterge)
 - Backup / restaurare a tuturor datelor (fișier JSON)
 - Temă luminoasă / întunecată / după sistem
 - **Actualizare din aplicație**: verifică GitHub Releases și instalează noua

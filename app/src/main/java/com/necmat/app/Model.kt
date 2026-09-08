@@ -12,7 +12,9 @@ data class Material(
     val id: Long,
     val name: String,
     val qty: Int = 0,
-    val price: Double = 0.0
+    val price: Double = 0.0,
+    /** v1.36: numele de catalog la creare (stabil la redenumire); gol la materialele proprii. */
+    val key: String = ""
 )
 
 data class Category(
@@ -21,7 +23,9 @@ data class Category(
     val materials: List<Material> = emptyList(),
     val brand: String = "",
     val model: String = "",
-    val phase: String = ""   // "", "mono" sau "tri" (pentru tablou)
+    val phase: String = "",   // "", "mono" sau "tri" (pentru tablou)
+    /** v1.36: cheia stabilă a categoriei standard (vezi [CategoryKeys]); goală la cele proprii. */
+    val key: String = ""
 ) {
     /** "Gewiss Chorus" sau "" dacă nu e setată marca. */
     val brandLabel: String
@@ -69,6 +73,15 @@ object BrandGroups {
         else -> group
     }
 
+    /** Grupul de mărci al unei categorii, după cheia ei stabilă (apoi după nume). */
+    fun forCategory(c: Category): String = when (c.kind) {
+        CategoryKeys.MODULE, CategoryKeys.DOZE_MODULARE, CategoryKeys.ACCESORII -> MODULAR
+        CategoryKeys.APARATAJ_INCASTRAT, CategoryKeys.DOZE_APARAT, CategoryKeys.APARATAJ_APLICAT -> APARATAJ
+        CategoryKeys.TABLOU -> TABLOU
+        CategoryKeys.DOZE_LEGATURI, CategoryKeys.CABLURI -> INSTALATIE
+        else -> infer(c.name)
+    }
+
     /** Deduce grupul unei categorii după nume. */
     fun infer(categoryName: String): String {
         val n = categoryName.lowercase()
@@ -100,7 +113,9 @@ data class Work(
     /** v1.35: linii de manoperă fixe pe lucrare (ex. instalare fotovoltaic per kW). */
     val extraLabor: List<LaborLine> = emptyList(),
     /** v1.35: "electric" / "pv" / "" — tipul ales în asistent (informativ). */
-    val kind: String = ""
+    val kind: String = "",
+    /** v1.36: CUI-ul clientului persoană juridică (apare în cardul Beneficiar din PDF). */
+    val cui: String = ""
 ) {
     val totalTypes get() = categories.sumOf { it.materials.size }
     val totalPieces get() = categories.sumOf { c -> c.materials.sumOf { it.qty } }
@@ -117,8 +132,16 @@ data class Work(
 data class OwnedMaterial(
     val name: String,
     val qty: Int,
-    val category: String = ""
-)
+    val category: String = "",
+    /** v1.36: numele de catalog al materialului (stabil la redenumire). */
+    val key: String = "",
+    /** v1.36: cheia categoriei (pentru grupare și UM). */
+    val catKey: String = ""
+) {
+    /** Cheia de potrivire cu liniile lucrării. */
+    fun matchKey(): String = normalizeName(key.ifBlank { name })
+    val unit: String get() = if (catKey == CategoryKeys.CABLURI || category.contains("(m)")) "m" else "buc"
+}
 
 /** Cheie de potrivire a numelor: fără majuscule, diacritice și spații duble. */
 fun normalizeName(name: String): String =
@@ -137,12 +160,12 @@ fun Work.subtractOwned(): Work {
     if (owned.isEmpty()) return this
     val remaining = linkedMapOf<String, Int>()
     owned.forEach { o ->
-        if (o.qty > 0) remaining.merge(normalizeName(o.name), o.qty, Int::plus)
+        if (o.qty > 0) remaining.merge(o.matchKey(), o.qty, Int::plus)
     }
     val used = linkedMapOf<String, Int>()
     val newCats = categories.map { c ->
         c.copy(materials = c.materials.mapNotNull { m ->
-            val key = normalizeName(m.name)
+            val key = m.matchKey()
             val left = remaining[key] ?: 0
             if (left <= 0 || m.qty <= 0) return@mapNotNull m
             val take = minOf(m.qty, left)
@@ -153,7 +176,7 @@ fun Work.subtractOwned(): Work {
         })
     }.filter { it.materials.isNotEmpty() }
     val effective = owned.mapNotNull { o ->
-        val key = normalizeName(o.name)
+        val key = o.matchKey()
         val u = used[key] ?: 0
         if (u <= 0) null else {
             used[key] = 0
@@ -209,9 +232,9 @@ fun accessorySummary(categories: List<Category>): AccessorySummary? {
     var slots = 0
     categories.forEach { c ->
         c.materials.forEach { m ->
-            if (m.qty > 0 && isModularBox(m.name)) {
+            if (m.qty > 0 && isModularBox(m.catalogName)) {
                 val n = Regex("(\\d+)\\s*module", RegexOption.IGNORE_CASE)
-                    .find(m.name)?.groupValues?.get(1)?.toIntOrNull()
+                    .find(m.catalogName)?.groupValues?.get(1)?.toIntOrNull()
                 if (n != null && n > 0) {
                     boxes += m.qty
                     slots += n * m.qty
@@ -222,8 +245,8 @@ fun accessorySummary(categories: List<Category>): AccessorySummary? {
     if (boxes == 0) return null
     var used = 0
     categories.forEach { c ->
-        if (c.name.trim().equals("module", ignoreCase = true)) {
-            c.materials.forEach { m -> used += moduleWidth(m.name) * m.qty }
+        if (c.kind == CategoryKeys.MODULE) {
+            c.materials.forEach { m -> used += moduleWidth(m.catalogName) * m.qty }
         }
     }
     return AccessorySummary(boxes, slots, used, (slots - used).coerceAtLeast(0))
@@ -276,7 +299,7 @@ data class LaborQuote(
 
 /** Categorie de montaj (ex. corpuri de iluminat) — intră doar în ofertă, nu în PDF-ul de materiale. */
 fun isMontajCategory(name: String): Boolean =
-    name.contains("(montaj)", ignoreCase = true) || name.contains("iluminat", ignoreCase = true)
+    CategoryKeys.exact(name).ifBlank { CategoryKeys.loose(name) } == CategoryKeys.ILUMINAT
 
 /** Din carcasa tabloului: (număr etaje, mărimea etajului în module) sau null. */
 fun tablouRows(name: String): Pair<Int, Int>? {
@@ -329,18 +352,18 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
     }
 
     work.categories.forEach { c ->
-        val montaj = isMontajCategory(c.name)
-        val legaturi = c.name.contains("legături", ignoreCase = true) ||
-            c.name.contains("legaturi", ignoreCase = true)
-        val cn = c.name.lowercase()
-        val cableCat = isCableCategory(c.name)
-        val tablouCat = cn.contains("tablou")
-        val aplicatCat = cn.contains("aplicat")
-        val incastratCat = cn.contains("aparataj") && (cn.contains("încastrat") || cn.contains("incastrat"))
-        val moduleCat = c.name.trim().equals("module", ignoreCase = true)
+        val k = c.kind
+        val montaj = k == CategoryKeys.ILUMINAT
+        val legaturi = k == CategoryKeys.DOZE_LEGATURI
+        val cableCat = k == CategoryKeys.CABLURI
+        val tablouCat = k == CategoryKeys.TABLOU
+        val aplicatCat = k == CategoryKeys.APARATAJ_APLICAT
+        val incastratCat = k == CategoryKeys.APARATAJ_INCASTRAT
+        val moduleCat = k == CategoryKeys.MODULE || k == CategoryKeys.ACCESORII
         c.materials.forEach { m ->
             if (m.qty <= 0) return@forEach
-            if (cableCat && isCableItem(m.name)) {
+            val mn = m.catalogName
+            if (cableCat && isCableItem(mn)) {
                 // cablu / conductor: preț pe metru după modul de montaj al categoriei
                 val mode = cableModeOf(c)
                 val price = cfg.cablePerMeter[mode] ?: 0.0
@@ -349,8 +372,8 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
                 )
                 return@forEach
             }
-            if (isTablouCarcasa(m.name)) {
-                tablouRows(m.name)?.let { (rows, size) ->
+            if (isTablouCarcasa(mn)) {
+                tablouRows(mn)?.let { (rows, size) ->
                     val price = cfg.rowPrices[size]
                         ?: cfg.rowPrices.minByOrNull { kotlin.math.abs(it.key - size) }?.value
                         ?: 0.0
@@ -358,12 +381,12 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
                         "Echipare tablou — etaj de $size module", rows * m.qty, price
                     )
                 }
-            } else if (isDozaItem(m.name) || montaj) {
-                val price = cfg.dozaPrices[m.name.trim().lowercase()] ?: 0.0
+            } else if (isDozaItem(mn) || montaj) {
+                val price = cfg.priceFor(m)
                 if (price > 0) {
                     val group = when {
                         montaj -> "Montaj corpuri de iluminat"
-                        isModularBox(m.name) -> "Montaj aparataj modular"
+                        isModularBox(mn) -> "Montaj aparataj modular"
                         legaturi -> "Montaj doze legături"
                         else -> "Montaj aparataj"
                     }
@@ -372,7 +395,7 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
             } else if (!moduleCat) {
                 // orice alt element cu preț setat în Setări → Manoperă (tuburi, jgheaburi,
                 // componente de tablou, prize/întrerupătoare încastrate sau aplicate)
-                val price = cfg.dozaPrices[m.name.trim().lowercase()] ?: 0.0
+                val price = cfg.priceFor(m)
                 if (price > 0) {
                     val group = when {
                         cableCat -> "Montaj tuburi, canale și jgheaburi"
@@ -404,11 +427,9 @@ fun laborQuote(work: Work, cfg: LaborConfig): LaborQuote {
     )
 }
 
-/** Categoria de cabluri și tuburi (după nume). */
-fun isCableCategory(name: String): Boolean {
-    val n = name.lowercase()
-    return n.contains("cablu") || n.contains("tub")
-}
+/** Categoria de cabluri și tuburi (după numele canonic sau cuvinte-cheie). */
+fun isCableCategory(name: String): Boolean =
+    CategoryKeys.exact(name).ifBlank { CategoryKeys.loose(name) } == CategoryKeys.CABLURI
 
 /** Cablu sau conductor (se taxează pe metru după modul de montaj), nu tub / canal / jgheab. */
 fun isCableItem(name: String): Boolean {
@@ -458,14 +479,14 @@ fun isTablouCarcasa(name: String): Boolean =
  */
 fun Work.filterForPdf(includeBoxes: Boolean): Work {
     val withoutMontaj = copy(
-        categories = categories.filterNot { isMontajCategory(it.name) }
+        categories = categories.filterNot { it.kind == CategoryKeys.ILUMINAT }
     )
     if (includeBoxes) return withoutMontaj
     return withoutMontaj.copy(
         categories = withoutMontaj.categories
             .map { c ->
                 c.copy(materials = c.materials.filterNot {
-                    isDozaItem(it.name) || isTablouCarcasa(it.name)
+                    isDozaItem(it.catalogName) || isTablouCarcasa(it.catalogName)
                 })
             }
             .filter { it.materials.isNotEmpty() }
@@ -503,12 +524,12 @@ fun migrateV3(cats: List<Category>, newId: () -> Long): List<Category> {
 
     // module noi în categoria "Module"
     val newModules = listOf("Modul TV", "Modul rețea CAT5", "Modul rețea CAT6")
-    val modIdx = result.indexOfFirst { it.name.trim().equals("module", ignoreCase = true) }
+    val modIdx = result.indexOfFirst { it.catalogKey == CategoryKeys.MODULE }
     if (modIdx >= 0) {
         var mod = result[modIdx]
         newModules.forEach { name ->
-            if (mod.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                mod = mod.copy(materials = mod.materials + Material(newId(), name))
+            if (!mod.hasCatalogItem(name)) {
+                mod = mod.copy(materials = mod.materials + Material(newId(), name, key = name))
             }
         }
         result = result.mapIndexed { i, c -> if (i == modIdx) mod else c }
@@ -521,21 +542,59 @@ fun migrateV3(cats: List<Category>, newId: () -> Long): List<Category> {
         "Priză rețea CAT5 încastrată", "Priză rețea CAT6 încastrată",
         "Priză TV încastrată"
     )
-    val burIdx = result.indexOfFirst {
-        it.name.trim().equals("aparataj încastrat", ignoreCase = true)
-    }
+    val burIdx = result.indexOfFirst { it.catalogKey == CategoryKeys.APARATAJ_INCASTRAT }
     result = if (burIdx >= 0) {
         var bur = result[burIdx]
         buriedItems.forEach { name ->
-            if (bur.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                bur = bur.copy(materials = bur.materials + Material(newId(), name))
+            if (!bur.hasCatalogItem(name)) {
+                bur = bur.copy(materials = bur.materials + Material(newId(), name, key = name))
             }
         }
         result.mapIndexed { i, c -> if (i == burIdx) bur else c }
     } else {
-        result + Category(newId(), "Aparataj încastrat", buriedItems.map { Material(newId(), it) })
+        result + Category(
+            newId(), "Aparataj încastrat", buriedItems.map { Material(newId(), it, key = it) },
+            key = CategoryKeys.APARATAJ_INCASTRAT
+        )
     }
     return result
+}
+
+/** Există deja materialul (după numele de catalog sau numele afișat)? */
+fun Category.hasCatalogItem(name: String): Boolean = materials.any {
+    it.catalogName.equals(name, ignoreCase = true) || it.name.equals(name, ignoreCase = true)
+}
+
+/** Adaugă materialele standard care lipsesc (cu cheie), fără a dubla ce există. */
+fun Category.addMissingItems(items: List<String>, newId: () -> Long): Category {
+    var out = this
+    items.forEach { name ->
+        if (!out.hasCatalogItem(name)) {
+            out = out.copy(materials = out.materials + Material(newId(), name, key = name))
+        }
+    }
+    return out
+}
+
+/**
+ * Migrare v1.36: atribuie cheile stabile categoriilor standard (după numele canonic)
+ * și numele de catalog materialelor care se potrivesc cu catalogul implicit.
+ * Aditivă și idempotentă; categoriile / materialele proprii rămân fără cheie.
+ */
+fun assignCatalogKeys(cats: List<Category>): List<Category> {
+    val defaults = Repo.defaultCatalog()
+    return cats.map { c ->
+        val ck = c.catalogKey
+        val known = defaults.firstOrNull { it.key == ck }
+            ?.materials?.associate { normalizeName(it.name) to it.name } ?: emptyMap()
+        c.copy(
+            key = ck,
+            materials = c.materials.map { m ->
+                if (m.key.isNotBlank()) m
+                else known[normalizeName(m.name)]?.let { m.copy(key = it) } ?: m
+            }
+        )
+    }
 }
 
 /**
@@ -548,8 +607,8 @@ fun Work.withAutoAccessories(): Work {
     val boxes = sortedMapOf<Int, Int>()
     categories.forEach { c ->
         c.materials.forEach { m ->
-            if (m.qty > 0 && isModularBox(m.name)) {
-                MODULE_BOX_REGEX.find(m.name)?.let { match ->
+            if (m.qty > 0 && isModularBox(m.catalogName)) {
+                MODULE_BOX_REGEX.find(m.catalogName)?.let { match ->
                     val n = match.groupValues[1].toIntOrNull()
                     if (n != null && n > 0) boxes[n] = (boxes[n] ?: 0) + m.qty
                 }
@@ -561,34 +620,37 @@ fun Work.withAutoAccessories(): Work {
     // module folosite (doar categoria "Module"); "dublă" ocupă 2 sloturi
     var usedModules = 0
     categories.forEach { c ->
-        if (c.name.trim().equals("module", ignoreCase = true)) {
+        if (c.kind == CategoryKeys.MODULE) {
             c.materials.forEach { m ->
-                usedModules += moduleWidth(m.name) * m.qty
+                usedModules += moduleWidth(m.catalogName) * m.qty
             }
         }
     }
 
     val acc = mutableListOf<Material>()
     var accId = -1000L
+    fun accItem(name: String, qty: Int) = Material(accId--, name, qty, key = name)
     boxes.forEach { (n, cnt) ->
-        acc += Material(accId--, "Ramă suport $n module", cnt)
-        acc += Material(accId--, "Ramă ornament (mască) $n module", cnt)
+        acc += accItem("Ramă suport $n module", cnt)
+        acc += accItem("Ramă ornament (mască) $n module", cnt)
     }
     val slots = boxes.entries.sumOf { it.key * it.value }
     val obturatoare = slots - usedModules
-    if (obturatoare > 0) acc += Material(accId--, "Obturator (modul fals)", obturatoare)
+    if (obturatoare > 0) acc += accItem("Obturator (modul fals)", obturatoare)
 
     // accesoriile moștenesc marca dozelor modulare (același sistem)
     val boxCat = categories.firstOrNull { c ->
-        c.materials.any { it.qty > 0 && isModularBox(it.name) }
+        c.materials.any { it.qty > 0 && isModularBox(it.catalogName) }
     }
 
     return copy(
-        categories = categories +
-            Category(
-                -999L, "Accesorii doze modulare (calcul automat)", acc,
-                brand = boxCat?.brand ?: "", model = boxCat?.model ?: ""
+        categories = sortGrouped(
+            categories + Category(
+                -999L, CategoryKeys.nameOf(CategoryKeys.ACCESORII), acc,
+                brand = boxCat?.brand ?: "", model = boxCat?.model ?: "",
+                key = CategoryKeys.ACCESORII
             )
+        )
     )
 }
 
@@ -602,10 +664,12 @@ object Repo {
             mats.put(
                 JSONObject().put("id", m.id).put("name", m.name)
                     .put("qty", m.qty).put("price", m.price)
+                    .apply { if (m.key.isNotBlank()) put("key", m.key) }
             )
         }
         return JSONObject().put("id", c.id).put("name", c.name).put("materials", mats)
             .put("brand", c.brand).put("model", c.model).put("phase", c.phase)
+            .apply { if (c.key.isNotBlank()) put("key", c.key) }
     }
 
     private fun catFromJson(c: JSONObject): Category {
@@ -617,12 +681,14 @@ object Repo {
                 val m = mats.getJSONObject(j)
                 Material(
                     m.getLong("id"), m.getString("name"),
-                    m.getInt("qty"), m.optDouble("price", 0.0)
+                    m.getInt("qty"), m.optDouble("price", 0.0),
+                    key = m.optString("key", "")
                 )
             },
             brand = c.optString("brand", ""),
             model = c.optString("model", ""),
-            phase = c.optString("phase", "")
+            phase = c.optString("phase", ""),
+            key = c.optString("key", "")
         )
     }
 
@@ -638,6 +704,7 @@ object Repo {
             .apply { w.pdfIncludeBoxes?.let { put("pdfBoxes", it) } }
             .apply { if (w.extraLabor.isNotEmpty()) put("extraLabor", laborLinesToJson(w.extraLabor)) }
             .apply { if (w.kind.isNotBlank()) put("kind", w.kind) }
+            .apply { if (w.cui.isNotBlank()) put("cui", w.cui) }
     }
 
     fun laborLinesToJson(lines: List<LaborLine>): JSONArray {
@@ -676,7 +743,8 @@ object Repo {
             clientId = if (w.has("clientId") && !w.isNull("clientId")) w.getLong("clientId") else null,
             pdfIncludeBoxes = if (w.has("pdfBoxes") && !w.isNull("pdfBoxes")) w.getBoolean("pdfBoxes") else null,
             extraLabor = laborLinesFromJson(w.optJSONArray("extraLabor")),
-            kind = w.optString("kind", "")
+            kind = w.optString("kind", ""),
+            cui = w.optString("cui", "")
         )
     }
 
@@ -689,6 +757,8 @@ object Repo {
         list.forEach { o ->
             arr.put(
                 JSONObject().put("name", o.name).put("qty", o.qty).put("category", o.category)
+                    .apply { if (o.key.isNotBlank()) put("key", o.key) }
+                    .apply { if (o.catKey.isNotBlank()) put("catKey", o.catKey) }
             )
         }
         return arr
@@ -702,7 +772,10 @@ object Repo {
             val name = o.optString("name", "")
             val qty = o.optInt("qty", 0)
             if (name.isBlank() || qty <= 0) null
-            else OwnedMaterial(name, qty, o.optString("category", ""))
+            else OwnedMaterial(
+                name, qty, o.optString("category", ""),
+                key = o.optString("key", ""), catKey = o.optString("catKey", "")
+            )
         }
     }
 
@@ -1021,7 +1094,7 @@ object Repo {
     private var nextId = 1L
     private fun nid() = nextId++
     private fun cat(name: String, vararg items: String) =
-        Category(nid(), name, items.map { Material(nid(), it) })
+        Category(nid(), name, items.map { Material(nid(), it, key = it) }, key = CategoryKeys.exact(name))
 
     /** Ordinea canonică de afișare a categoriilor. */
     val canonicalOrder = listOf(
@@ -1186,28 +1259,16 @@ object Repo {
     /** Migrare v12: categoria „Sistem fotovoltaic” + cablurile PV (aditiv, idempotent). */
     fun migrateV12(cats: List<Category>, newId: () -> Long): List<Category> {
         var out = cats.map { c ->
-            if (!isCableCategory(c.name)) c
-            else {
-                var cc = c
-                cableExtrasV12.forEach { name ->
-                    if (cc.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                        cc = cc.copy(materials = cc.materials + Material(newId(), name))
-                    }
-                }
-                cc
-            }
+            if (c.catalogKey != CategoryKeys.CABLURI) c else c.addMissingItems(cableExtrasV12, newId)
         }
-        val idx = out.indexOfFirst { it.name.equals("Sistem fotovoltaic", ignoreCase = true) }
+        val idx = out.indexOfFirst { it.catalogKey == CategoryKeys.PV }
         if (idx < 0) {
-            out = out + Category(newId(), "Sistem fotovoltaic", pvItems.map { Material(newId(), it) })
+            out = out + Category(
+                newId(), CategoryKeys.nameOf(CategoryKeys.PV),
+                pvItems.map { Material(newId(), it, key = it) }, key = CategoryKeys.PV
+            )
         } else {
-            var pv = out[idx]
-            pvItems.forEach { name ->
-                if (pv.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                    pv = pv.copy(materials = pv.materials + Material(newId(), name))
-                }
-            }
-            out = out.mapIndexed { i, c -> if (i == idx) pv else c }
+            out = out.mapIndexed { i, c -> if (i == idx) c.addMissingItems(pvItems, newId) else c }
         }
         return out
     }
@@ -1219,8 +1280,9 @@ object Repo {
      */
     fun applyAllMigrations(cats: List<Category>, newId: () -> Long): List<Category> {
         var out = cats
-        out = migrateV3(out, newId)
         out = renameTermCategories(out)
+        out = assignCatalogKeys(out)       // v1.36: cheile stabile, înaintea tuturor migrărilor
+        out = migrateV3(out, newId)
         out = addV4Materials(out, newId)   // fără re-sortare: ordinea rămâne a utilizatorului
         out = migrateV5(out, newId)
         out = migrateV7(out, newId)
@@ -1234,16 +1296,7 @@ object Repo {
 
     /** Migrare v11: cabluri, conductori, tuburi și jgheaburi în categoria de cabluri. */
     fun migrateV11(cats: List<Category>, newId: () -> Long): List<Category> = cats.map { c ->
-        if (!isCableCategory(c.name)) c
-        else {
-            var out = c
-            cableExtrasV11.forEach { name ->
-                if (out.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                    out = out.copy(materials = out.materials + Material(newId(), name))
-                }
-            }
-            out
-        }
+        if (c.catalogKey != CategoryKeys.CABLURI) c else c.addMissingItems(cableExtrasV11, newId)
     }
 
     /** Reasignează id-urile duplicate (moștenite din generatorul vechi de id-uri). */
@@ -1265,73 +1318,45 @@ object Repo {
 
     /** Migrare v10: „Priză dublă (2 module)" devine „Priză 2 module". */
     fun migrateV10(cats: List<Category>): List<Category> = cats.map { c ->
-        if (!c.name.trim().equals("module", ignoreCase = true)) c
+        if (c.catalogKey != CategoryKeys.MODULE) c
         else c.copy(materials = c.materials.map { m ->
             if (m.name.equals("Priză dublă (2 module)", ignoreCase = true) ||
                 m.name.equals("Priză dublă", ignoreCase = true)
-            ) m.copy(name = "Priză 2 module") else m
+            ) m.copy(name = "Priză 2 module", key = "Priză 2 module") else m
         })
     }
 
     /** Migrare v9: dozele de legături pe trepte de circuite. */
     fun migrateV9(cats: List<Category>, newId: () -> Long): List<Category> =
         cats.map { c ->
-            if (!c.name.trim().equals("doze legături", ignoreCase = true)) c
-            else {
-                var out = c
-                legaturiTiers.forEach { name ->
-                    if (out.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                        out = out.copy(materials = out.materials + Material(newId(), name))
-                    }
-                }
-                out
-            }
+            if (c.catalogKey != CategoryKeys.DOZE_LEGATURI) c else c.addMissingItems(legaturiTiers, newId)
         }
 
     /** Migrare v8: categoria de corpuri de iluminat pentru instalările existente. */
     fun migrateV8(cats: List<Category>, newId: () -> Long): List<Category> {
-        val idx = cats.indexOfFirst { isMontajCategory(it.name) }
+        val idx = cats.indexOfFirst { it.catalogKey == CategoryKeys.ILUMINAT }
         return if (idx >= 0) {
-            var c = cats[idx]
-            lightingItems.forEach { name ->
-                if (c.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                    c = c.copy(materials = c.materials + Material(newId(), name))
-                }
-            }
-            cats.mapIndexed { i, cc -> if (i == idx) c else cc }
+            cats.mapIndexed { i, cc -> if (i == idx) cc.addMissingItems(lightingItems, newId) else cc }
         } else {
             cats + Category(
-                newId(), "Corpuri de iluminat (montaj)",
-                lightingItems.map { Material(newId(), it) }
+                newId(), CategoryKeys.nameOf(CategoryKeys.ILUMINAT),
+                lightingItems.map { Material(newId(), it, key = it) }, key = CategoryKeys.ILUMINAT
             )
         }
     }
 
-    /** Ordonează categoriile după ordinea canonică; cele necunoscute rămân la coadă. */
-    fun sortCanonical(cats: List<Category>): List<Category> {
-        val rank = canonicalOrder.mapIndexed { i, n -> n.lowercase() to i }.toMap()
-        return cats.sortedBy { rank[it.name.trim().lowercase()] ?: Int.MAX_VALUE }
-    }
+    /** Ordonează categoriile pe grupuri și ordinea canonică (v1.36: [sortGrouped]). */
+    fun sortCanonical(cats: List<Category>): List<Category> = sortGrouped(cats)
 
     /** Partea aditivă a migrării v4 (fără re-sortarea categoriilor). */
-    fun addV4Materials(cats: List<Category>, newId: () -> Long): List<Category> {
-        fun addMissing(c: Category, items: List<String>): Category {
-            var out = c
-            items.forEach { name ->
-                if (out.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                    out = out.copy(materials = out.materials + Material(newId(), name))
-                }
-            }
-            return out
-        }
-        return cats.map { c ->
-            when (c.name.trim().lowercase()) {
-                "tablou electric" -> addMissing(c, tablouExtras)
-                "doze legături" -> addMissing(c, dozeLegaturiExtras)
+    fun addV4Materials(cats: List<Category>, newId: () -> Long): List<Category> =
+        cats.map { c ->
+            when (c.catalogKey) {
+                CategoryKeys.TABLOU -> c.addMissingItems(tablouExtras, newId)
+                CategoryKeys.DOZE_LEGATURI -> c.addMissingItems(dozeLegaturiExtras, newId)
                 else -> c
             }
         }
-    }
 
     /** Migrare v4: materiale noi pentru tablou și doze legături + ordinea canonică. */
     fun migrateV4(cats: List<Category>, newId: () -> Long): List<Category> =
@@ -1343,33 +1368,33 @@ object Repo {
      * (cantitatea existentă rămâne pe CAT6; CAT5 se adaugă cu 0).
      */
     fun migrateV7(cats: List<Category>, newId: () -> Long): List<Category> = cats.map { c ->
-        when (c.name.trim().lowercase()) {
-            "module" -> {
+        when (c.catalogKey) {
+            CategoryKeys.MODULE -> {
                 var mats = c.materials.map { m ->
                     when {
                         m.name.equals("Priză dublă", ignoreCase = true) ->
                             m.copy(name = "Priză dublă (2 module)")
                         m.name.equals("Modul rețea (CAT5/6)", ignoreCase = true) ->
-                            m.copy(name = "Modul rețea CAT6")
+                            m.copy(name = "Modul rețea CAT6", key = "Modul rețea CAT6")
                         else -> m
                     }
                 }
-                if (mats.any { it.name.equals("Modul rețea CAT6", ignoreCase = true) } &&
-                    mats.none { it.name.equals("Modul rețea CAT5", ignoreCase = true) }
+                if (mats.any { it.catalogName.equals("Modul rețea CAT6", ignoreCase = true) } &&
+                    mats.none { it.catalogName.equals("Modul rețea CAT5", ignoreCase = true) }
                 ) {
-                    mats = mats + Material(newId(), "Modul rețea CAT5")
+                    mats = mats + Material(newId(), "Modul rețea CAT5", key = "Modul rețea CAT5")
                 }
                 c.copy(materials = mats)
             }
-            "aparataj încastrat" -> {
+            CategoryKeys.APARATAJ_INCASTRAT -> {
                 var mats = c.materials.map { m ->
                     if (m.name.equals("Priză rețea (CAT5/6) încastrată", ignoreCase = true))
-                        m.copy(name = "Priză rețea CAT6 încastrată") else m
+                        m.copy(name = "Priză rețea CAT6 încastrată", key = "Priză rețea CAT6 încastrată") else m
                 }
-                if (mats.any { it.name.equals("Priză rețea CAT6 încastrată", ignoreCase = true) } &&
-                    mats.none { it.name.equals("Priză rețea CAT5 încastrată", ignoreCase = true) }
+                if (mats.any { it.catalogName.equals("Priză rețea CAT6 încastrată", ignoreCase = true) } &&
+                    mats.none { it.catalogName.equals("Priză rețea CAT5 încastrată", ignoreCase = true) }
                 ) {
-                    mats = mats + Material(newId(), "Priză rețea CAT5 încastrată")
+                    mats = mats + Material(newId(), "Priză rețea CAT5 încastrată", key = "Priză rețea CAT5 încastrată")
                 }
                 c.copy(materials = mats)
             }
@@ -1380,15 +1405,6 @@ object Repo {
     /** Migrare v5: componentele de tablou din v1.7. */
     fun migrateV5(cats: List<Category>, newId: () -> Long): List<Category> =
         cats.map { c ->
-            if (!c.name.trim().equals("tablou electric", ignoreCase = true)) c
-            else {
-                var out = c
-                tablouExtras2.forEach { name ->
-                    if (out.materials.none { it.name.equals(name, ignoreCase = true) }) {
-                        out = out.copy(materials = out.materials + Material(newId(), name))
-                    }
-                }
-                out
-            }
+            if (c.catalogKey != CategoryKeys.TABLOU) c else c.addMissingItems(tablouExtras2, newId)
         }
 }

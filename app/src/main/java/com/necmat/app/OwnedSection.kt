@@ -35,12 +35,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** Materialul ales pentru introducerea cantității deținute de client. */
-private data class OwnedPick(val name: String, val needed: Int, val category: String)
+private data class OwnedPick(val item: OwnedMaterial, val needed: Int)
 
 /**
  * Secțiunea expandabilă „Materiale existente la client” din pagina Necesar.
  * Ce se adaugă aici se scade din lista de cumpărături DUPĂ calculul
- * accesoriilor automate (vezi [Work.shoppingList]).
+ * accesoriilor automate (vezi [Work.shoppingList]). Din v1.36 liniile sunt
+ * grupate pe categorii, iar potrivirea se face după cheia materialului.
  */
 @Composable
 fun OwnedSection(vm: AppViewModel) {
@@ -48,14 +49,22 @@ fun OwnedSection(vm: AppViewModel) {
     val needed = remember(lines) {
         val m = mutableMapOf<String, Int>()
         lines.forEach { c ->
-            c.materials.forEach { mat -> m.merge(normalizeName(mat.name), mat.qty, Int::plus) }
+            c.materials.forEach { mat -> m.merge(mat.matchKey(), mat.qty, Int::plus) }
         }
         m
     }
     var showPicker by remember { mutableStateOf(false) }
     var pick by remember { mutableStateOf<OwnedPick?>(null) }
+    var confirmClear by remember { mutableStateOf(false) }
     val expanded = vm.ownedExpanded
     val totalOwned = vm.owned.sumOf { it.qty }
+
+    // ordinea categoriilor din lista de cumpărături (grupuri → categorii)
+    val catOrder = remember(lines) { lines.mapIndexed { i, c -> c.name to i }.toMap() }
+    val grouped = vm.owned
+        .groupBy { it.category }
+        .entries
+        .sortedBy { catOrder[it.key] ?: Int.MAX_VALUE }
 
     Surface(
         color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f),
@@ -105,23 +114,38 @@ fun OwnedSection(vm: AppViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
-                vm.owned.forEach { o ->
-                    val need = needed[normalizeName(o.name)] ?: 0
-                    OwnedRow(
-                        item = o,
-                        needed = need,
-                        onMinus = { vm.setOwned(o.name, o.qty - 1, o.category) },
-                        onPlus = { vm.setOwned(o.name, o.qty + 1, o.category) },
-                        onQtyClick = { pick = OwnedPick(o.name, need, o.category) }
+                grouped.forEach { (catName, items) ->
+                    if (catName.isNotBlank()) Text(
+                        catName,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                     )
+                    items.forEach { o ->
+                        val need = needed[o.matchKey()] ?: 0
+                        OwnedRow(
+                            item = o,
+                            needed = need,
+                            onMinus = { vm.setOwned(o, o.qty - 1) },
+                            onPlus = { vm.setOwned(o, o.qty + 1) },
+                            onQtyClick = { pick = OwnedPick(o, need) }
+                        )
+                    }
                 }
-                OutlinedButton(
-                    onClick = { showPicker = true },
-                    enabled = lines.isNotEmpty(),
-                    modifier = Modifier
+                Row(
+                    Modifier
                         .fillMaxWidth()
-                        .padding(top = 6.dp)
-                ) { Text("Adaugă material existent") }
+                        .padding(top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = { showPicker = true },
+                        enabled = lines.isNotEmpty(),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Adaugă material existent") }
+                    if (vm.owned.isNotEmpty()) TextButton(onClick = { confirmClear = true }) { Text("Golește") }
+                }
                 Text(
                     "Verifică dacă materialele clientului sunt compatibile cu marca aleasă " +
                         "(ex. modulele altui producător nu intră în ramele alese).",
@@ -133,24 +157,33 @@ fun OwnedSection(vm: AppViewModel) {
         }
     }
 
+    if (confirmClear) ConfirmDialog(
+        title = "Golești lista?",
+        text = "Toate materialele existente la client sunt scoase din această lucrare.",
+        onDismiss = { confirmClear = false },
+        onConfirm = { vm.clearOwned(); confirmClear = false }
+    )
+
     if (showPicker) OwnedPickerDialog(
         lines = lines,
         owned = vm.owned,
         onDismiss = { showPicker = false },
         onPick = { cat, mat ->
             showPicker = false
-            pick = OwnedPick(mat.name, mat.qty, cat.name)
+            pick = OwnedPick(
+                OwnedMaterial(mat.name, 0, cat.name, key = mat.key, catKey = cat.kind),
+                mat.qty
+            )
         }
     )
     pick?.let { p ->
-        val current = vm.owned
-            .firstOrNull { normalizeName(it.name) == normalizeName(p.name) }?.qty ?: 0
+        val current = vm.owned.firstOrNull { it.matchKey() == p.item.matchKey() }?.qty ?: 0
         NumberDialog(
-            title = "${p.name} — câte are clientul? (necesar ${p.needed})",
+            title = "${p.item.name} — câte are clientul? (necesar ${p.needed} ${p.item.unit})",
             initial = if (current > 0) current else p.needed,
             onDismiss = { pick = null },
             onConfirm = { q ->
-                vm.setOwned(p.name, q.coerceAtMost(p.needed), p.category)
+                vm.setOwned(p.item, q.coerceAtMost(p.needed))
                 pick = null
             }
         )
@@ -179,7 +212,7 @@ private fun OwnedRow(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                "Necesar $needed · Are ${item.qty} · De cumpărat ${(needed - item.qty).coerceAtLeast(0)}",
+                "Necesar $needed · Are ${item.qty} · De cumpărat ${(needed - item.qty).coerceAtLeast(0)} ${item.unit}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -198,7 +231,7 @@ private fun OwnedRow(
     HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 }
 
-/** Alege dintre liniile care ar intra în PDF (necesar + accesorii calculate). */
+/** Alege dintre liniile care ar intra în PDF (necesar + accesorii calculate), pe grupuri. */
 @Composable
 private fun OwnedPickerDialog(
     lines: List<Category>,
@@ -207,14 +240,15 @@ private fun OwnedPickerDialog(
     onPick: (Category, Material) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    val ownedMap = owned.associate { normalizeName(it.name) to it.qty }
+    val ownedMap = owned.associate { it.matchKey() to it.qty }
     val filtered = lines
         .map { c ->
-            c to c.materials.filter {
+            c.copy(materials = c.materials.filter {
                 query.isBlank() || it.name.contains(query.trim(), ignoreCase = true)
-            }
+            })
         }
-        .filter { it.second.isNotEmpty() }
+        .filter { it.materials.isNotEmpty() }
+    val sections = groupSections(filtered)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -235,38 +269,49 @@ private fun OwnedPickerDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 LazyColumn(Modifier.heightIn(max = 380.dp)) {
-                    filtered.forEach { (cat, mats) ->
-                        item(key = "pc${cat.id}") {
+                    sections.forEach { section ->
+                        if (section.showHeader) item(key = "pg${section.group.name}") {
                             Text(
-                                cat.name,
-                                style = MaterialTheme.typography.titleSmall,
+                                section.group.label.uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 10.dp)
                             )
                         }
-                        items(mats, key = { "pm${cat.id}_${it.id}" }) { m ->
-                            val have = ownedMap[normalizeName(m.name)] ?: 0
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onPick(cat, m) }
-                                    .padding(vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                        section.categories.forEach { cat ->
+                            item(key = "pc${cat.id}") {
                                 Text(
-                                    m.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    if (have > 0) "are $have / ${m.qty}" else "necesar ${m.qty}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (have > 0) MaterialTheme.colorScheme.tertiary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                    cat.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                                 )
                             }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                            items(cat.materials, key = { "pm${cat.id}_${it.id}" }) { m ->
+                                val have = ownedMap[m.matchKey()] ?: 0
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onPick(cat, m) }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        m.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        if (have > 0) "are $have / ${m.qty}" else "necesar ${m.qty} ${cat.unit}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (have > 0) MaterialTheme.colorScheme.tertiary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                            }
                         }
                     }
                 }

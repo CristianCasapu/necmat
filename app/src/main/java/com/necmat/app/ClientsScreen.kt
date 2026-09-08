@@ -89,6 +89,11 @@ class ClientFormState(initial: Client?) {
     var email by mutableStateOf(initial?.email ?: "")
     var cnp by mutableStateOf(initial?.cnp ?: "")
     var notes by mutableStateOf(initial?.notes ?: "")
+    /** v1.36: persoană fizică / juridică și CUI-ul firmei. */
+    var kind by mutableStateOf(initial?.kind ?: Client.KIND_PF)
+    var cui by mutableStateOf(initial?.cui ?: "")
+
+    val isCompany: Boolean get() = kind == Client.KIND_PJ
 
     fun setFromClient(c: Client) {
         clientId = c.id
@@ -98,6 +103,8 @@ class ClientFormState(initial: Client?) {
         email = c.email
         cnp = c.cnp
         notes = c.notes
+        kind = c.kind
+        cui = c.cui
     }
 
     /** Din lucrare vin doar câmpurile pe care le are lucrarea. */
@@ -106,6 +113,8 @@ class ClientFormState(initial: Client?) {
         name = w.client
         phone = w.phone
         address = w.address
+        cui = w.cui
+        kind = if (w.cui.isNotBlank()) Client.KIND_PJ else Client.KIND_PF
     }
 
     fun unlink() {
@@ -114,7 +123,8 @@ class ClientFormState(initial: Client?) {
 
     fun toClient(): Client = Client(
         clientId ?: 0L, name.trim(), phone.trim(), address.trim(),
-        email.trim(), cnp.trim(), notes.trim()
+        email.trim(), if (isCompany) "" else cnp.trim(), notes.trim(),
+        kind = kind, cui = if (isCompany) normalizeCui(cui) else ""
     )
 
     private fun Client.essentials() = copy(id = 0L, createdAt = 0L, updatedAt = 0L)
@@ -123,7 +133,8 @@ class ClientFormState(initial: Client?) {
         toClient().essentials() != (initial ?: Client(0L, "")).essentials()
 
     val emailError get() = !isValidEmail(email)
-    val cnpError get() = cnp.isNotBlank() && !isValidCnp(cnp)
+    val cnpError get() = !isCompany && cnp.isNotBlank() && !isValidCnp(cnp)
+    val cuiError get() = isCompany && cui.isNotBlank() && !isValidCui(cui)
 }
 
 @Composable
@@ -379,10 +390,37 @@ fun ClientFields(
                 onPick = { form.setFromClient(it); showPicker = false }
             )
         }
+        // v1.36: persoană fizică / juridică (+ CUI la firme)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = !form.isCompany,
+                onClick = { form.kind = Client.KIND_PF },
+                label = { Text("Persoană fizică") }
+            )
+            FilterChip(
+                selected = form.isCompany,
+                onClick = { form.kind = Client.KIND_PJ },
+                label = { Text("Persoană juridică") }
+            )
+        }
         OutlinedTextField(
             value = form.name, onValueChange = { form.name = it },
-            label = { Text(nameLabel) },
+            label = { Text(if (form.isCompany) "Firmă (denumire)" else nameLabel) },
             singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+        if (form.isCompany) OutlinedTextField(
+            value = form.cui,
+            onValueChange = { v -> form.cui = v.uppercase().filter { it.isLetterOrDigit() }.take(12) },
+            label = { Text("CUI — opțional") },
+            singleLine = true,
+            isError = form.cuiError,
+            supportingText = {
+                Text(
+                    if (form.cuiError) "CUI invalid (2–10 cifre, cifră de control)"
+                    else "Ex.: RO12345678 — apare în cardul Beneficiar din PDF"
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
         )
         val linked = form.clientId?.let { id -> clients.firstOrNull { it.id == id } }
         if (linked != null) {
@@ -487,7 +525,7 @@ fun ClientFields(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth()
             )
-            if (storeCnp) OutlinedTextField(
+            if (storeCnp && !form.isCompany) OutlinedTextField(
                 value = form.cnp,
                 onValueChange = { v -> form.cnp = v.filter { it.isDigit() }.take(13) },
                 label = { Text("CNP — opțional") },
@@ -526,7 +564,7 @@ fun ClientFormDialog(
     var duplicate by remember { mutableStateOf<Client?>(null) }
     val dirty = form.differsFrom(initial)
     val requestDismiss = { if (dirty) confirmExit = true else onDismiss() }
-    val canSave = form.name.isNotBlank() && !form.emailError && !form.cnpError
+    val canSave = form.name.isNotBlank() && !form.emailError && !form.cnpError && !form.cuiError
 
     fun candidate(): Client = form.toClient().copy(
         id = form.clientId ?: initial?.id ?: 0L,
@@ -702,6 +740,7 @@ fun saveClientToContacts(context: Context, c: Client) {
         }
         if (c.email.isNotBlank()) putExtra(ContactsContract.Intents.Insert.EMAIL, c.email)
         if (c.address.isNotBlank()) putExtra(ContactsContract.Intents.Insert.POSTAL, c.address)
+        if (c.isCompany) putExtra(ContactsContract.Intents.Insert.COMPANY, c.name)
         putExtra(
             ContactsContract.Intents.Insert.NOTES,
             listOf("Client NecMat", c.notes).filter { it.isNotBlank() }.joinToString("\n")
@@ -726,6 +765,7 @@ fun ClientsScreen(vm: AppViewModel, onNewWork: () -> Unit, onDeleted: (String) -
             q.isEmpty() || normalizeName(c.name).contains(normalizeName(q)) ||
                 normalizePhone(c.phone).contains(q.filter { it.isDigit() }.ifEmpty { "§" }) ||
                 c.email.contains(q, ignoreCase = true) ||
+                (c.cui.isNotBlank() && c.cui.contains(normalizeCui(q))) ||
                 normalizeName(c.address).contains(normalizeName(q))
         }
         .sortedBy { normalizeName(it.name) }
@@ -735,7 +775,7 @@ fun ClientsScreen(vm: AppViewModel, onNewWork: () -> Unit, onDeleted: (String) -
             CompactSearchField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = "Caută client (nume, telefon, e-mail, adresă)",
+                placeholder = "Caută client (nume, telefon, e-mail, adresă, CUI)",
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 12.dp, end = 12.dp, top = 8.dp)
@@ -834,7 +874,10 @@ private fun ClientRow(client: Client, worksCount: Int, onClick: () -> Unit) {
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-                val sub = listOf(client.phone, client.locality).filter { it.isNotBlank() }.joinToString("  ·  ")
+                val sub = listOf(
+                    if (client.isCompany) "PJ" + (if (client.cui.isNotBlank()) " · CUI ${client.cui}" else "") else "",
+                    client.phone, client.locality
+                ).filter { it.isNotBlank() }.joinToString("  ·  ")
                 if (sub.isNotEmpty()) Text(
                     sub, style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -912,10 +955,12 @@ private fun ClientDetailDialog(
                         Text(value, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     }
                 }
+                infoRow("Tip", client.kindLabel)
+                if (client.isCompany) infoRow("CUI", client.cui)
                 infoRow("Telefon", client.phone)
                 infoRow("E-mail", client.email)
                 infoRow("Adresă", client.address)
-                if (vm.settings.storeCnp) infoRow("CNP", maskCnp(client.cnp))
+                if (vm.settings.storeCnp && !client.isCompany) infoRow("CNP", maskCnp(client.cnp))
                 infoRow("Notițe", client.notes)
                 if (client.phone.isBlank() && client.address.isBlank() && client.email.isBlank()) Text(
                     "Fără date de contact — apasă „Editează”.",

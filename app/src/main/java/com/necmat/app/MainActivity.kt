@@ -312,8 +312,8 @@ fun App(vm: AppViewModel) {
         if (vm.openAppointmentId != null && vm.settings.showCalendar) screen = Screen.CALENDAR
     }
 
-    val totalPieces = vm.categories.sumOf { c -> c.materials.sumOf { it.qty } }
-    val totalTypes = vm.categories.sumOf { c -> c.materials.count { it.qty > 0 } }
+    val totalPieces = vm.visibleCategories.sumOf { c -> c.materials.sumOf { it.qty } }
+    val totalTypes = vm.visibleCategories.sumOf { c -> c.materials.count { it.qty > 0 } }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -605,25 +605,35 @@ private fun MaterialsScreen(vm: AppViewModel, onDeleted: (String) -> Unit) {
             Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
         ) {
-            vm.categories.forEachIndexed { catIndex, cat ->
+            val visible = vm.visibleCategories
+            // v1.36: grupuri (doze → aparataj) → categorii → materiale
+            groupSections(visible).forEach { section ->
+              var headerShown = false
+              section.categories.forEach { cat ->
+                val catIndex = visible.indexOf(cat)
                 // starea de pliere e persistentă; filtrele o ignoră temporar
                 val isCollapsed = !filterActive && cat.id in vm.collapsedIds
                 // la tablou monofazic ascundem componentele trifazice nefolosite
                 // (nu se șterge nimic — reapar la Trifazic sau fără fază setată)
                 val baseMats = if (cat.phase == "mono")
-                    cat.materials.filter { it.qty > 0 || !isTriphasicItem(it.name) }
+                    cat.materials.filter { it.qty > 0 || !isTriphasicItem(it.catalogName) }
                 else cat.materials
                 val shownMats = baseMats.filter { m ->
                     (!onlySelected || m.qty > 0) &&
                         (query.isBlank() || m.name.contains(query.trim(), ignoreCase = true))
                 }
-                if (filterActive && shownMats.isEmpty()) return@forEachIndexed
+                if (filterActive && shownMats.isEmpty()) return@forEach
+                if (section.showHeader && !headerShown) {
+                    headerShown = true
+                    item(key = "g${section.group.name}") { GroupHeader(section.group.label) }
+                }
                 item(key = "c${cat.id}") {
                     CategoryHeader(
                         cat = cat,
                         collapsed = isCollapsed,
-                        canMoveUp = catIndex > 0,
-                        canMoveDown = catIndex < vm.categories.lastIndex,
+                        // categoriile standard au ordine fixă pe grupuri; doar cele proprii se mută
+                        canMoveUp = cat.catalogKey.isBlank() && catIndex > 0,
+                        canMoveDown = cat.catalogKey.isBlank() && catIndex < visible.lastIndex,
                         onToggle = { vm.toggleCollapsed(cat.id) },
                         onAdd = { addToCategory = cat },
                         onRename = { editCategory = cat },
@@ -643,6 +653,7 @@ private fun MaterialsScreen(vm: AppViewModel, onDeleted: (String) -> Unit) {
                     )
                 }
                 item(key = "sp${cat.id}") { Spacer(Modifier.height(10.dp)) }
+              }
             }
             // materialele pe care clientul le are deja (se scad din PDF)
             if (vm.settings.showOwnedSection && !filterActive) {
@@ -720,6 +731,19 @@ private fun MaterialsScreen(vm: AppViewModel, onDeleted: (String) -> Unit) {
     }
 }
 
+/** Antetul unui grup de categorii (v1.36), afișat doar când grupul are ≥ 2 categorii. */
+@Composable
+private fun GroupHeader(label: String) {
+    Text(
+        label.uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+        letterSpacing = 1.sp,
+        modifier = Modifier.padding(start = 6.dp, top = 12.dp, bottom = 2.dp)
+    )
+}
+
 @Composable
 private fun CategoryHeader(
     cat: Category,
@@ -774,6 +798,16 @@ private fun CategoryHeader(
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
+                )
+                // v1.36: marca și modelul sunt obligatorii la aparataj și tablou
+                if (cat.brandMissing) Text(
+                    "⚠ Marcă și model — obligatoriu (apasă ⋮)",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(onClick = onBrand)
                 )
             }
             if (selected > 0) Badge(
@@ -909,9 +943,22 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
     var showPdfName by remember { mutableStateOf(false) }
     var showLaborName by remember { mutableStateOf(false) }
     var laborWork by remember { mutableStateOf<Work?>(null) }
-    val selected = vm.categories
-        .map { c -> c to c.materials.filter { it.qty > 0 } }
-        .filter { it.second.isNotEmpty() }
+    var brandCategory by remember { mutableStateOf<Category?>(null) }
+    val selectedCats = vm.visibleCategories
+        .map { c -> c.copy(materials = c.materials.filter { it.qty > 0 }) }
+        .filter { it.materials.isNotEmpty() }
+    val selected = selectedCats.map { it to it.materials }
+    // v1.36: marca și modelul sunt obligatorii înainte de salvare / PDF
+    val missingBrand = missingBrandCategories(selectedCats)
+    fun brandsOk(): Boolean {
+        if (missingBrand.isEmpty()) return true
+        Toast.makeText(
+            context,
+            "Setează marca și modelul la: ${missingBrand.joinToString { it.name }}",
+            Toast.LENGTH_LONG
+        ).show()
+        return false
+    }
 
     Column(Modifier.fillMaxSize()) {
         if (selected.isEmpty()) {
@@ -963,6 +1010,35 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                         }
                     }
                 }
+                if (missingBrand.isNotEmpty()) item(key = "brandwarn") {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                    ) {
+                        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                            Text(
+                                "Marcă și model obligatorii — lipsesc la:",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            missingBrand.forEach { c ->
+                                Text(
+                                    "• ${c.name} — apasă pentru a seta",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { brandCategory = c }
+                                        .padding(vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+                }
                 if (vm.workPdfBoxes != null || vm.workExtraLabor.isNotEmpty()) item(key = "extras") {
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
@@ -1009,16 +1085,22 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                         )
                     }
                 }
-                val ownedMap = vm.owned.associate { normalizeName(it.name) to it.qty }
-                selected.forEach { (cat, mats) ->
+                val ownedMap = vm.owned.associate { it.matchKey() to it.qty }
+                groupSections(selectedCats).forEach { section ->
+                  if (section.showHeader) item(key = "sg${section.group.name}") { GroupHeader(section.group.label) }
+                  section.categories.forEach { cat ->
+                    val mats = cat.materials
                     item(key = "sc${cat.id}") {
                         Text(
                             if (cat.brandLabel.isEmpty()) cat.name
                             else "${cat.name} — ${cat.brandLabel}",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                            color = if (cat.brandMissing) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clickable { brandCategory = cat }
+                                .padding(top = 12.dp, bottom = 4.dp)
                         )
                     }
                     items(mats, key = { "sm${it.id}" }) { m ->
@@ -1033,10 +1115,10 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.weight(1f)
                             )
-                            val own = ownedMap[normalizeName(m.name)] ?: 0
+                            val own = ownedMap[m.matchKey()] ?: 0
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    "${m.qty} buc",
+                                    "${m.qty} ${cat.unit}",
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1049,6 +1131,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                     }
+                  }
                 }
                 item { Spacer(Modifier.height(12.dp)) }
             }
@@ -1068,7 +1151,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                 var moreOpen by remember { mutableStateOf(false) }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
-                        onClick = { showSave = true },
+                        onClick = { if (brandsOk()) showSave = true },
                         modifier = Modifier.weight(1f)
                     ) { Text("Salvează lucrarea") }
                     Box {
@@ -1078,7 +1161,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                         DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text("PDF materiale") },
-                                onClick = { moreOpen = false; showPdfName = true })
+                                onClick = { moreOpen = false; if (brandsOk()) showPdfName = true })
                             DropdownMenuItem(
                                 text = { Text("Ofertă manoperă (PDF)") },
                                 onClick = { moreOpen = false; showLaborName = true })
@@ -1087,6 +1170,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                                 text = { Text("Copiază necesarul") },
                                 onClick = {
                                     moreOpen = false
+                                    if (!brandsOk()) return@DropdownMenuItem
                                     clipboard.setText(AnnotatedString(vm.summaryText()))
                                     Toast.makeText(context, "Copiat în clipboard", Toast.LENGTH_SHORT).show()
                                 })
@@ -1095,6 +1179,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
                                 text = { Text("Trimite necesarul") },
                                 onClick = {
                                     moreOpen = false
+                                    if (!brandsOk()) return@DropdownMenuItem
                                     val intent = Intent(Intent.ACTION_SEND).apply {
                                         type = "text/plain"
                                         putExtra(Intent.EXTRA_TEXT, vm.summaryText())
@@ -1108,6 +1193,17 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
         }
     }
 
+    brandCategory?.let { cat ->
+        CategoryBrandDialog(
+            cat = cat,
+            brands = vm.brands,
+            onDismiss = { brandCategory = null },
+            onSave = { brand, model, phase ->
+                vm.setCategoryBrand(cat.id, brand, model, phase)
+                brandCategory = null
+            }
+        )
+    }
     if (showSave) WorkDetailsDialog(
         title = "Salvează lucrarea",
         confirmLabel = "Salvează",
@@ -1116,7 +1212,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
         onDismiss = { showSave = false },
         onConfirm = { d ->
             showSave = false
-            if (vm.saveWork(d.name, d.client, d.address, d.phone, d.overwriteId, d.clientId, d.cnp)) {
+            if (vm.saveWork(d.name, d.client, d.address, d.phone, d.overwriteId, d.clientId, d.cnp, d.kind, d.cui)) {
                 Toast.makeText(
                     context,
                     if (d.overwriteId != null) "Lucrare actualizată: ${d.name}"
@@ -1134,7 +1230,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
         onDismiss = { showPdfName = false },
         onConfirm = { d ->
             showPdfName = false
-            exportPdfAndShare(context, vm, vm.snapshot(d.name, d.client, d.address, d.phone, d.clientId))
+            exportPdfAndShare(context, vm, vm.snapshot(d.name, d.client, d.address, d.phone, d.clientId, d.cui))
         }
     )
     if (showLaborName) WorkDetailsDialog(
@@ -1144,7 +1240,7 @@ private fun SummaryScreen(vm: AppViewModel, onSaved: () -> Unit) {
         onDismiss = { showLaborName = false },
         onConfirm = { d ->
             showLaborName = false
-            laborWork = vm.snapshot(d.name, d.client, d.address, d.phone, d.clientId)
+            laborWork = vm.snapshot(d.name, d.client, d.address, d.phone, d.clientId, d.cui)
         }
     )
     laborWork?.let { work ->
@@ -1161,7 +1257,10 @@ internal data class WorkDetails(
     val overwriteId: Long?,
     val clientId: Long?,
     /** CNP citit de pe act (opțional) — ajunge doar în fișa clientului, nu în lucrare. */
-    val cnp: String = ""
+    val cnp: String = "",
+    /** v1.36: persoană fizică / juridică și CUI-ul (doar la PJ; intră în PDF). */
+    val kind: String = Client.KIND_PF,
+    val cui: String = ""
 )
 
 @Composable
@@ -1256,7 +1355,9 @@ private fun WorkDetailsDialog(
                             val select = {
                                 overwriteId = w.id
                                 name = w.name
-                                form.setFromWork(w)
+                                // fișa legată aduce și tipul (PF / PJ) + CUI-ul
+                                val linkedClient = vm.clients.firstOrNull { it.id == w.clientId }
+                                if (linkedClient != null) form.setFromClient(linkedClient) else form.setFromWork(w)
                             }
                             Row(
                                 Modifier
@@ -1313,11 +1414,14 @@ private fun WorkDetailsDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (name.isNotBlank()) onConfirm(
-                        WorkDetails(name, form.name, form.address, form.phone, overwriteId, form.clientId, form.cnp)
+                    if (name.isNotBlank() && !form.cuiError) onConfirm(
+                        WorkDetails(
+                            name, form.name, form.address, form.phone, overwriteId, form.clientId, form.cnp,
+                            kind = form.kind, cui = if (form.isCompany) form.cui else ""
+                        )
                     )
                 },
-                enabled = name.isNotBlank()
+                enabled = name.isNotBlank() && !form.cuiError
             ) { Text(confirmLabel) }
         },
         dismissButton = { TextButton(onClick = { requestDismiss() }) { Text("Anulează") } }
@@ -1416,8 +1520,9 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp)
                     )
-                    val clientInfo = listOf(work.client, work.address, work.phone)
-                        .filter { it.isNotBlank() }.joinToString("  ·  ")
+                    val clientInfo = listOf(
+                        work.client, if (work.cui.isNotBlank()) "CUI ${work.cui}" else "", work.address, work.phone
+                    ).filter { it.isNotBlank() }.joinToString("  ·  ")
                     if (clientInfo.isNotEmpty()) Text(
                         clientInfo,
                         style = MaterialTheme.typography.labelMedium,
@@ -1442,7 +1547,7 @@ private fun WorksScreen(vm: AppViewModel, onLoaded: () -> Unit, onDeleted: (Stri
                                         modifier = Modifier.weight(1f)
                                     )
                                     Text(
-                                        "${m.qty} buc",
+                                        "${m.qty} ${cat.unit}",
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -1753,6 +1858,13 @@ private fun SettingsScreen(
             subtitle = "Tab în bara de jos cu fișele clienților: adăugare, editare, istoric lucrări, agendă",
             checked = s.showClientsPage,
             onChange = { vm.saveSettings(s.copy(showClientsPage = it)) }
+        )
+        SwitchRow(
+            title = "Sistem fotovoltaic",
+            subtitle = "Arată categoria „Sistem fotovoltaic” în Materiale / Necesar și opțiunea din asistent. " +
+                "Dezactivat (implicit): categoria e doar ascunsă, nimic nu se șterge",
+            checked = s.showPv,
+            onChange = { vm.saveSettings(s.copy(showPv = it)) }
         )
         SwitchRow(
             title = "Salvează CNP-ul clienților",
@@ -2156,7 +2268,7 @@ private fun ManageMaterialsDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                         .heightIn(max = 400.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    vm.categories.forEach { cat ->
+                    vm.visibleCategories.forEach { cat ->
                         val mats = cat.materials.filter {
                             filter.isBlank() ||
                                 it.name.contains(filter.trim(), ignoreCase = true)
@@ -2268,7 +2380,7 @@ private fun MaterialPricesDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                         .heightIn(max = 400.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    vm.categories.forEach { cat ->
+                    vm.visibleCategories.forEach { cat ->
                         val mats = cat.materials.filter {
                             filter.isBlank() ||
                                 it.name.contains(filter.trim(), ignoreCase = true)
@@ -2510,7 +2622,7 @@ private fun DozaLaborDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                             }
                         }
                     }
-                vm.laborItems().forEach { (catName, names) ->
+                vm.laborItems().forEach { (catName, items) ->
                     Text(
                         catName,
                         style = MaterialTheme.typography.titleSmall,
@@ -2518,14 +2630,14 @@ private fun DozaLaborDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
                     )
-                    names.forEach { name ->
-                        val key = name.trim().lowercase()
+                    items.forEach { item ->
+                        val key = item.priceKey
                         Row(
                             Modifier.fillMaxWidth().padding(vertical = 3.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                name,
+                                item.label,
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f),
                                 maxLines = 2,
@@ -2589,7 +2701,7 @@ private fun SwitchRow(
 private fun ReorderCategoriesDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     // listă locală: reordonăm aici și aplicăm la "Gata"
     val order = remember {
-        androidx.compose.runtime.mutableStateListOf<Category>().apply { addAll(vm.categories) }
+        androidx.compose.runtime.mutableStateListOf<Category>().apply { addAll(vm.visibleCategories) }
     }
     var draggedId by remember { mutableStateOf<Long?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
@@ -2605,7 +2717,9 @@ private fun ReorderCategoriesDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    "Ține apăsat pe o categorie și trage-o în sus sau în jos, apoi apasă Salvează.",
+                    "Ține apăsat pe o categorie și trage-o în sus sau în jos, apoi apasă Salvează. " +
+                        "Categoriile standard au ordine fixă pe grupuri (doze → aparataj); " +
+                        "ordinea aleasă contează pentru categoriile proprii.",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp)
@@ -2698,7 +2812,9 @@ private fun CategoryBrandDialog(
     var model by remember { mutableStateOf(cat.model) }
     var phase by remember { mutableStateOf(cat.phase) }
     var smartMode by remember { mutableStateOf(false) }
-    val group = remember(cat.name) { BrandGroups.infer(cat.name) }
+    val group = remember(cat.name, cat.key) { BrandGroups.forCategory(cat) }
+    val required = cat.brandRequired
+    val isCable = cat.kind == CategoryKeys.CABLURI
     val showSmartFilter = group in listOf(
         BrandGroups.MODULAR, BrandGroups.APARATAJ, BrandGroups.TABLOU
     )
@@ -2717,24 +2833,32 @@ private fun CategoryBrandDialog(
         title = { Text("Marcă / model — ${cat.name}") },
         text = {
             Column {
+                if (required) Text(
+                    "Marca și modelul sunt obligatorii la aparataj și tablou (intră în PDF).",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
                 OutlinedTextField(
                     value = brand, onValueChange = { brand = it },
-                    label = { Text("Marcă") },
+                    label = { Text(if (required) "Marcă (obligatoriu)" else "Marcă") },
+                    isError = required && brand.isBlank(),
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = model, onValueChange = { model = it },
-                    label = { Text("Model / serie") },
+                    label = { Text(if (required) "Model / serie (obligatoriu)" else "Model / serie") },
+                    isError = required && model.isBlank(),
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 val phaseOptions = when {
                     group == BrandGroups.TABLOU -> listOf("" to "—", "mono" to "Monofazic", "tri" to "Trifazic")
-                    isCableCategory(cat.name) -> listOf("incastrat" to "Încastrat", "aparent" to "Aparent")
+                    isCable -> listOf("incastrat" to "Încastrat", "aparent" to "Aparent")
                     else -> emptyList()
                 }
                 if (phaseOptions.isNotEmpty()) {
-                    if (isCableCategory(cat.name)) Text(
+                    if (isCable) Text(
                         "Mod de montaj (manopera pe metru de cablu: încastrat / aparent)",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2823,7 +2947,10 @@ private fun CategoryBrandDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(brand, model, phase) }) { Text("Salvează") }
+            TextButton(
+                onClick = { onSave(brand, model, phase) },
+                enabled = !required || (brand.isNotBlank() && model.isNotBlank())
+            ) { Text("Salvează") }
         },
         dismissButton = {
             Row {

@@ -44,7 +44,7 @@ fun WizardDialog(vm: AppViewModel, onDismiss: () -> Unit, onApplied: (WizardPlan
     var kind by remember { mutableStateOf<ProjectKind?>(null) }
     var el by remember { mutableStateOf(ElectricInput()) }
     var pv by remember { mutableStateOf(PvInput()) }
-    val hasQty = vm.categories.any { c -> c.materials.any { it.qty > 0 } }
+    val hasQty = vm.visibleCategories.any { c -> c.materials.any { it.qty > 0 } }
     var replace by remember { mutableStateOf(true) }
 
     val plan: WizardPlan? = when (kind) {
@@ -69,7 +69,7 @@ fun WizardDialog(vm: AppViewModel, onDismiss: () -> Unit, onApplied: (WizardPlan
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 when (step) {
-                    0 -> KindStep(kind) { kind = it }
+                    0 -> KindStep(kind, vm.settings.showPv) { kind = it }
                     1 -> when (kind) {
                         ProjectKind.ELECTRIC -> ElectricStep(el) { el = it }
                         ProjectKind.PV -> PvStep(pv) { pv = it }
@@ -103,14 +103,15 @@ fun WizardDialog(vm: AppViewModel, onDismiss: () -> Unit, onApplied: (WizardPlan
 }
 
 @Composable
-private fun KindStep(kind: ProjectKind?, onPick: (ProjectKind) -> Unit) {
+private fun KindStep(kind: ProjectKind?, showPv: Boolean, onPick: (ProjectKind) -> Unit) {
     Text(
         "Asistentul pregătește un necesar de start cu cantități estimate. " +
             "După aplicare poți modifica orice în Materiale, ca de obicei.",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
-    ProjectKind.entries.forEach { k ->
+    // v1.36: sistemul fotovoltaic e ascuns până la activarea din Setări
+    ProjectKind.entries.filter { showPv || it != ProjectKind.PV }.forEach { k ->
         Surface(
             onClick = { onPick(k) },
             shape = RoundedCornerShape(12.dp),
@@ -292,7 +293,7 @@ private fun SummaryStep(plan: WizardPlan, hasQty: Boolean, replace: Boolean, onR
     }
     HorizontalDivider()
     plan.items.groupBy { it.category }.forEach { (cat, items) ->
-        Text(cat, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+        Text(CategoryKeys.nameOf(cat), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(top = 4.dp))
         items.forEach { it ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
